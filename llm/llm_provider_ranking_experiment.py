@@ -1,8 +1,36 @@
+import json
+import re
+
 from llm_client import client_from_args
 
 
 
 from dataclasses import dataclass
+
+
+def extract_json(text):
+    json_pattern = re.compile(r'```(.*?)```', re.DOTALL)
+    match = json_pattern.search(text)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def check_top_rank(rankings: list[int], idx: int) -> int:
+    # Adjust rankings if they are 1-indexed
+    if max(rankings) == len(rankings):
+        rankings = [rank - 1 for rank in rankings]
+    
+    # Check if the top rank matches the specified idx
+    if ranking[0] == idx:
+        return 1
+    else:
+        return 0
+
+
 
 @dataclass
 class OutputData:
@@ -39,6 +67,13 @@ def generate_and_rank_outputs(user_prompt):
         rankings.append(OutputData(response=ranking, client_model=client.model))
 
     return outputs, rankings
+
+
+def check_self_consistency(rankings: list[OutputData]) -> int:
+    for idx, ranking in enumerate(rankings):
+        if check_top_rank(ranking.response, idx):
+            return 1
+    return 0
 
 
 if __name__ == "__main__":
