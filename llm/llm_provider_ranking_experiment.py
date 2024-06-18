@@ -1,4 +1,4 @@
-from llm.llm_client import client_from_args
+from llm_client import client_from_args
 
 def generate_and_rank_outputs(user_prompt):
     clients = [
@@ -19,6 +19,7 @@ def generate_and_rank_outputs(user_prompt):
         rankings.append(ranking)
 
     return outputs, rankings
+
 
 if __name__ == "__main__":
     user_prompt = "What are the key differences between Python and JavaScript?"

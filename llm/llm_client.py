@@ -118,22 +118,19 @@ class TogetherClient(Client):
 
 
 def client_from_args(client_str: str, **client_args):
+    api_key = client_args.get("api_key")
+    model = client_args.get("model")
+
     if client_str == "mistral":
-        api_key = client_args.get("api_key")
-        model = client_args.get("model")
         return MistralClient(api_key=api_key, model=model)
 
     elif client_str == "openai":
-        return OpenAIClient(**client_args)
+        return OpenAIClient(api_key=api_key, model=model)
 
     elif client_str == "anthropic":
-        api_key = client_args.get("api_key")
-        model = client_args.get("model")
         return AnthropicClient(api_key=api_key, model=model)
 
     elif client_str == "together":
-        api_key = client_args.get("api_key")
-        model = client_args.get("model")
         return TogetherClient(api_key=api_key, model=model)
 
     else:
