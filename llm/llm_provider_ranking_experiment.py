@@ -20,15 +20,15 @@ def generate_and_rank_outputs(user_prompt):
 
     return outputs, rankings
 
-# Example usage
-user_prompt = "What are the key differences between Python and JavaScript?"
-outputs, rankings = generate_and_rank_outputs(user_prompt)
+if __name__ == "__main__":
+    user_prompt = "What are the key differences between Python and JavaScript?"
+    outputs, rankings = generate_and_rank_outputs(user_prompt)
 
-print("Outputs:")
-for output in outputs:
-    print(output + "\n")
+    print("Outputs:")
+    for output in outputs:
+        print(output + "\n")
 
-print("Rankings:")
-for ranking in rankings:
-    print(ranking + "\n")
+    print("Rankings:")
+    for ranking in rankings:
+        print(ranking + "\n")
     
