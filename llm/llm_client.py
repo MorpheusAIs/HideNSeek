@@ -85,11 +85,15 @@ class AnthropicClient(Client):
 
         generate_args["model"] = model
 
+        if "temperature" not in generate_args:
+            generate_args["temperature"] = 0.3
+
         response = self.client.messages.create(
             messages=messages,
             max_tokens=4096,
             model = model,
-            system = system
+            system = system,
+            temperature=generate_args["temperature"]
         )
         return response.content[0].text
 
@@ -109,10 +113,14 @@ class TogetherClient(Client):
 
         if "model" not in generate_args:
             generate_args["model"] = self.model
+        
+        if "temperature" not in generate_args:
+            generate_args["temperature"] = 0.3
 
         response = self.client.chat.completions.create(
             model=generate_args["model"],
             messages=messages,
+            temperature=generate_args["temperature"]
         )
         return response.choices[0].message.content
 
