@@ -18,7 +18,6 @@ def extract_json(text):
                 matched = matched[4:].strip()
 
             matched = matched.replace('\n', '').replace('\r', '') 
-            print(f"matched - {matched}")
             return json.loads(matched)
         except json.JSONDecodeError as e:
             print(f"error - {e}")
@@ -63,12 +62,35 @@ def generate_and_rank_outputs(user_prompt):
         system_prompt = """You are a content grader who will grade all content based on its clarity, relevance, and coherence. Evaluate all options and out a ranking.
         You will respond in the following format: 
         ```json
-        {
-            criteria: an explination of how you will evaluate the content.
-            ranking: A list representing the ranking of the outputs from best to worst like `[1,2,3]`
-            rational: A rational for your ranking.
-        }
+        the json output
         ```
+
+        you have access to the following tools:
+            {
+                "name": "evaluate_content",
+                "description": "Evaluate and rank content based on specified criteria",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                    "criteria": {
+                        "type": "string",
+                        "description": "An explanation of how the content will be evaluated"
+                    },
+                    "ranking": {
+                        "type": "array",
+                        "items": {
+                        "type": "integer"
+                        },
+                        "description": "A list representing the ranking of the outputs from best to worst, e.g. [1,2,3]"
+                    },
+                    "rationale": {
+                        "type": "string", 
+                        "description": "A rationale for the ranking"
+                    }
+                    },
+                    "required": ["criteria", "ranking", "rationale"]
+                }
+            }
         """
         ranking = client.get_completion(system=system_prompt, message=ranking_prompt, temperature=0.3)
         rankings.append(OutputData(response=ranking, client_model=client.model))
