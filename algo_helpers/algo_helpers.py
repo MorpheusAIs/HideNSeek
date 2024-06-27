@@ -1,14 +1,13 @@
 import re
 import json
 
-import numpy
+import matplotlib.pyplot as plt
 import numpy as np
 import ollama
-
 from scipy.stats import gaussian_kde
 from scipy.signal import argrelextrema
 
-import matplotlib.pyplot as plt
+from llm.llm_provider_ranking_experiment import extract_json
 
 
 class LLMModel:
@@ -29,28 +28,18 @@ class ResponseEvaluationTensor:
 
     @staticmethod
     def _extract_prompt(text):
-        # Define a regex pattern to find the JSON string
-        pattern = r'```json(.*?)```'
-
-        # Use re.search to find the first match
-        match = re.search(pattern, text, re.DOTALL)
-
-        if match:
-            # Extract the JSON string
-            json_str = match.group(1)
-
-            # Load the JSON string into a dictionary
-            try:
-                data = json.loads(json_str)
-                prompt_value = data.get('prompt')
-                if prompt_value:
-                    return prompt_value
-                else:
-                    return None
-            except json.JSONDecodeError as e:
-                print("Error decoding JSON:", e)
+        extracted_json = extract_json(text)
+        
+        if extracted_json is not None:
+            prompt_value = extracted_json.get('prompt')
+            if prompt_value:
+                return prompt_value
+            else:
+                print("No 'prompt' key found in the extracted JSON.")
         else:
-            print("No JSON string found in the text.")
+            print("No valid JSON found in the text.")
+        
+        return None
 
     def generate_prompt(self, model_handle: str):
         response = ollama.chat(model=model_handle, messages=[
@@ -89,32 +78,17 @@ class ResponseEvaluationTensor:
 
     @staticmethod
     def _extract_rating(text):
-        # Define a regex pattern to find the JSON string
-        pattern = r'```json(.*?)```'
-
-        # Use re.search to find the first match
-        match = re.search(pattern, text, re.DOTALL)
-
-        if match:
-            # Extract the JSON string
-            json_str = match.group(1)
-
-            # Load the JSON string into a dictionary
-            try:
-                data = json.loads(json_str)
-                rating_value = data.get('rating')
-                if rating_value:
-                    try:
-                        rating_value = int(rating_value)
-                        return int(rating_value)
-                    except ValueError:
-                        return None
-                else:
-                    return None
-            except json.JSONDecodeError as e:
-                print("Error decoding JSON:", e)
+        json_str = extract_json(text)
+        if json_str:
+            rating_value = json_str.get('rating')
+            if rating_value:
+                rating_value = int(rating_value)
+                return int(rating_value)
+            else:
+                return None
         else:
-            print("No JSON string found in the text.")
+            print("NO JSON string found")
+            return None
 
     def rate_response(self, model_handle: str, model_prompt: str, model_output: str):
         response = ollama.chat(model=model_handle, messages=[

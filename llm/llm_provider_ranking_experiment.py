@@ -1,7 +1,7 @@
 import json
 import re
 
-from llm_client import client_from_args
+from llm.llm_client import client_from_args
 
 
 from dataclasses import dataclass
