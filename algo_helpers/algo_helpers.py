@@ -91,17 +91,29 @@ class ResponseEvaluationTensor:
             return None
 
     def rate_response(self, model_handle: str, model_prompt: str, model_output: str):
+        
+        user_message = """You are a content grader who will output a rating between 1 to 5 indicating how well the provided content follows the user query.
+        Output a 5 if the content fully followed the user query, and output a 1 if it doesn't follow it at all. 
+        You will respond in the following format: 
+        ```json
+        the json output
+        ```
+
+        Output the following JSON dictionary: 
+        {
+            "rational" : describe why you chose the rating,
+            "rating" : Integer representing the rating between 1 to 5
+        }\n
+        """
+        user_message += f"given the following user query:\n{model_prompt}. provide a rating for this Context:\n{model_output}"
+
         response = ollama.chat(model=model_handle, messages=[
             {
-                'role': 'user',
-                'content': f'Given this user query: {model_prompt}, '
-                           f'how would you rate this output on a scale of 1 to 5\n'
-                           f'model output: {model_output}\n'
-                           ' Place your rating in JSON format '
-                           '```json{"rating": <integer, either 1 2 3 4 5}```'
+                "role" : "user",
+                "content" : user_message
             }
         ])
-
+        print(f"response - {response}")
         # extract rating
         rating_value = self._extract_rating(response['message']['content'])
 
