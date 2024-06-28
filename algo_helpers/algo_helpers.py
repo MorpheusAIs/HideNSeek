@@ -7,8 +7,23 @@ import ollama
 from scipy.stats import gaussian_kde
 from scipy.signal import argrelextrema
 
-from llm.llm_provider_ranking_experiment import extract_json
 
+def extract_json(text):  # FIXME, duplicate from llm/llm_provider_ranking_experiment.py
+    json_pattern = re.compile(r'```(.*?)```', re.DOTALL)
+    match = json_pattern.search(text)
+    if match:
+        try:
+            matched = match.group(1).strip()
+
+            if matched.startswith("json"):
+                matched = matched[4:].strip()
+
+            matched = matched.replace('\n', '').replace('\r', '')
+            return json.loads(matched)
+        except json.JSONDecodeError as e:
+            print(f"error - {e}")
+            return None
+    return None
 
 class LLMModel:
     def __init__(self, ollama_handle, MMLU_score):
@@ -29,7 +44,7 @@ class ResponseEvaluationTensor:
     @staticmethod
     def _extract_prompt(text):
         extracted_json = extract_json(text)
-        
+
         if extracted_json is not None:
             prompt_value = extracted_json.get('prompt')
             if prompt_value:
@@ -38,7 +53,7 @@ class ResponseEvaluationTensor:
                 print("No 'prompt' key found in the extracted JSON.")
         else:
             print("No valid JSON found in the text.")
-        
+
         return None
 
     def generate_prompt(self, model_handle: str):
@@ -98,38 +113,51 @@ class ResponseEvaluationTensor:
                      print("NO JSON string found")
                      return None
 
-    def rate_response(self, model_handle: str, model_prompt: str, model_output: str):
+    def rate_response(self, model_handle: str, model_prompt: str, model_output: str, _num_attempts=0):
         
         user_message = """You are a content grader who will output a rating between 1 to 5 indicating how well the provided content follows the user query.
-        Output a 5 if the content fully followed the user query, and output a 1 if it doesn't follow it at all. 
-        You will respond in the following format: 
-        ```json
-        the json output
-        ```
+        Output a 5 if the content fully followed the user query, and output a 1 if it doesn't follow it at all."""
 
-        Output the following JSON dictionary: 
+        if _num_attempts:
+            user_message += ("""Be sure to rate this using the following JSON dict format:
+                             ```json
+                             {
+                                \"rationale\" : describe why you chose the rating,
+                                \"rating\" : Integer representing the rating between 1 to 5
+                             }```
+            """) * _num_attempts
+
+        user_message += """Output the following JSON dictionary, make sure you include ```json {...}``` around the JSON string: 
+        ```json
         {
-            "rational" : describe why you chose the rating,
+            "rationale" : describe why you chose the rating,
             "rating" : Integer representing the rating between 1 to 5
-        }\n
+        }
+        ```
         """
-        user_message += f"given the following user query:\n{model_prompt}. provide a rating for this Context:\n{model_output}"
+        user_message += (f"given the following user query:\n{model_prompt}. "
+                         f"provide a rating for this Context:\n{model_output}")
 
         response = ollama.chat(model=model_handle, messages=[
             {
-                "role" : "user",
-                "content" : user_message
+                "role": "user",
+                "content": user_message
             }
-        ])
-        print(f"response - {response}")
+        ])['message']['content']
+        print(f"Response - {response}")
         # extract rating
-        rating_value = self._extract_rating(response['message']['content'])
+        rating_value = self._extract_rating(response)
 
         # ensure it's an int between 1 and 5 (incl.)
         if isinstance(rating_value, int) and 1 <= rating_value <= 5:
             return rating_value
         else:
-            return self.rate_response(model_handle, model_prompt, model_output)
+            return self.rate_response(
+                model_handle,
+                model_prompt,
+                model_output,
+                _num_attempts=_num_attempts + 1
+            )
 
     def compute_response_evaluation_tensor(self):
         return
@@ -145,19 +173,19 @@ if __name__ == "__main__":
     p = evaluator.generate_prompt(model_to_test)
     print(p)
 
-    p_optim = evaluator.optimize_prompt(model_to_test, p)
-    print(p_optim)
+    # p_optim = evaluator.optimize_prompt(model_to_test, p)
+    # print(p_optim)
 
     # DUT
     response = ollama.chat(model=model_to_test, messages=[
         {
             'role': 'user',
-            'content': p_optim
+            'content': p
         }
     ])['message']['content']
 
     print(response)
 
-    rating = evaluator.rate_response(model_to_test, p_optim, response)
+    rating = evaluator.rate_response(model_to_test, p, response)
 
     print(rating)
