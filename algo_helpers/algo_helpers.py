@@ -88,7 +88,8 @@ class ResponseEvaluationTensor:
                 return None
         else:
             # attempt to extract `rating: #` out of the text
-                pattern = re.compile(r'(?:"rating"|rating)\s*:\s*(?:"(\d+)"|(\d+))(?:\s*,|\s*\n|\s*$)', re.IGNORECASE)
+            
+                pattern = re.compile(r'(?:"rating"|rating)\s*:\s*(?:"?(\d+)"?)(?:\s*,|\s*\n|\s*$)', re.IGNORECASE)
     
                 match = pattern.search(text)
                 if match:
