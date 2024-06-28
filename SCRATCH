@@ -1,0 +1,3 @@
+work on prompt for auditor
+
+instead of just calling the model again, mention it failed and pass in previous context
