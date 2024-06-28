@@ -87,8 +87,16 @@ class ResponseEvaluationTensor:
             else:
                 return None
         else:
-            print("NO JSON string found")
-            return None
+            # attempt to extract `rating: #` out of the text
+            
+                pattern = re.compile(r'(?:"rating"|rating)\s*:\s*(?:"?(\d+)"?)(?:\s*,|\s*\n|\s*$)', re.IGNORECASE)
+    
+                match = pattern.search(text)
+                if match:
+                    return int(match.group(1))
+                else:
+                     print("NO JSON string found")
+                     return None
 
     def rate_response(self, model_handle: str, model_prompt: str, model_output: str):
         
