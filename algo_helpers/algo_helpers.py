@@ -6,7 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from together import Together
-from scipy.stats import gaussian_kde
+
+import pandas as pd
+from scipy.stats import gaussian_kde, ttest_1samp
 from scipy.signal import argrelextrema
 
 from llm.llm_client import TogetherClient
@@ -207,6 +209,101 @@ class ResponseEvaluationTensor:
 
     def run_eval(self):
         pass
+
+    @staticmethod
+    def test_self_preference_bias(tensor):
+        """
+        Perform a statistical test for self-preference bias on a 3D tensor.
+        
+        Parameters:
+        tensor (numpy.ndarray): A 3D numpy array with shape [model, model, trials]
+        
+        Returns:
+        dict: A dictionary containing the test results
+        """
+        # Ensure the tensor is a numpy array
+        tensor = np.array(tensor)
+        
+        # Get the dimensions
+        num_models, _, num_trials = tensor.shape
+        
+        # Calculate self-preference scores
+        self_preference_scores = []
+        for i in range(num_models):
+            self_score = np.mean(tensor[i, i, :])
+            others_score = np.mean(tensor[i, :, :][tensor[i, :, :] != tensor[i, i, :]])
+            self_preference_scores.append(self_score - others_score)
+        
+        # Perform one-sample t-test
+        t_statistic, p_value = ttest_1samp(self_preference_scores, 0)
+        
+        # Calculate effect size (Cohen's d)
+        effect_size = np.mean(self_preference_scores) / np.std(self_preference_scores, ddof=1)
+        
+        # Prepare results
+        test_results = {
+            'mean_self_preference_score': np.mean(self_preference_scores),
+            't_statistic': t_statistic,
+            'p_value': p_value,
+            'effect_size': effect_size,
+            'self_preference_scores': self_preference_scores
+        }
+        
+        return test_results
+
+    @staticmethod
+    def permutation_test_model_preference(tensor, n_permutations=10000):
+        """
+        Perform a permutation test to check if models prefer higher-rated models than themselves.
+        
+        Parameters:
+        tensor (numpy.ndarray): A 3D numpy array with shape [model, model, trials]
+                                Models are sorted in descending order of overall rating.
+        n_permutations (int): Number of permutations for the test.
+        
+        Returns:
+        dict: A dictionary containing the test results
+        """
+        num_models, _, num_trials = tensor.shape
+        
+        def compute_preference_statistic(data):
+            preference_sum = 0
+            count = 0
+            for i in range(num_models):
+                for j in range(i+1, num_models):  # Only compare with lower-rated models
+                    preference_sum += np.mean(data[i, j] - data[j, i])
+                    count += 1
+            return preference_sum / count if count > 0 else 0
+        
+        # Compute observed statistic
+        observed_statistic = compute_preference_statistic(tensor)
+        
+        # Perform permutations
+        permuted_statistics = []
+        for _ in range(n_permutations):
+            permuted_tensor = tensor.copy()
+            for i in range(num_models):
+                for j in range(i+1, num_models):
+                    if np.random.rand() < 0.5:
+                        permuted_tensor[i, j], permuted_tensor[j, i] = permuted_tensor[j, i], permuted_tensor[i, j]
+            permuted_statistics.append(compute_preference_statistic(permuted_tensor))
+        
+        # Compute p-value
+        p_value = np.mean([stat >= observed_statistic for stat in permuted_statistics])
+        
+        # Compute effect size (standardized mean difference)
+        effect_size = observed_statistic / np.std(permuted_statistics)
+        
+        # Prepare results
+        test_results = {
+            'observed_statistic': observed_statistic,
+            'p_value': p_value,
+            'effect_size': effect_size,
+            'n_permutations': n_permutations
+        }
+        
+        return test_results
+    
 
 
 if __name__ == "__main__":
