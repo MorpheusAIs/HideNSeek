@@ -1,11 +1,18 @@
+import os
 import re
 import json
 
-import matplotlib.pyplot as plt
 import numpy as np
-import ollama
+import matplotlib.pyplot as plt
+
+from together import Together
 from scipy.stats import gaussian_kde
 from scipy.signal import argrelextrema
+
+from llm.llm_client import TogetherClient
+from utils.logger_config import setup_logger
+
+logger = setup_logger(__name__)
 
 
 def extract_json(text):  # FIXME, duplicate from llm/llm_provider_ranking_experiment.py
@@ -21,25 +28,26 @@ def extract_json(text):  # FIXME, duplicate from llm/llm_provider_ranking_experi
             matched = matched.replace('\n', '').replace('\r', '')
             return json.loads(matched)
         except json.JSONDecodeError as e:
-            print(f"error - {e}")
+            logger.error(f"{e}")
             return None
     return None
 
+
 class LLMModel:
-    def __init__(self, ollama_handle, MMLU_score):
-        self.ollama_handle = ollama_handle
+    def __init__(self, model_handle, MMLU_score):
+        self.model_handle = model_handle
         self.MMLU_score = MMLU_score
 
 
 class ResponseEvaluationTensor:
-    def __init__(self, models_to_compare=("phi3:mini", "llama3:8b", "gemma:7b", "gemma:2b")):
-        self.ollama_models = [
-            LLMModel("phi3:mini", MMLU_score=0.688),  # 3b params
-            LLMModel("llama3:8b", MMLU_score=0.684),  # 8b params
-            LLMModel("gemma:7b", MMLU_score=0.643),   # 7b params
-            LLMModel("gemma:2b", MMLU_score=0.423),   # 2b params
-            # LLMModel("phi3:medium", MMLU_score=0.782),          # 14b params
+    def __init__(self):
+        self.together_models = [
+            # LLMModel(model_handle="mistralai/Mixtral-8x7B-v0.1", MMLU_score=0.6859),
+            LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
+            LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
+            LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
         ]
+        self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
 
     @staticmethod
     def _extract_prompt(text):
@@ -50,46 +58,51 @@ class ResponseEvaluationTensor:
             if prompt_value:
                 return prompt_value
             else:
-                print("No 'prompt' key found in the extracted JSON.")
+                logger.warning("No 'prompt' key found in the extracted JSON.")
         else:
-            print("No valid JSON found in the text.")
+            logger.warning("No valid JSON found in the text.")
 
         return None
 
-    def generate_prompt(self, model_handle: str):
-        response = ollama.chat(model=model_handle, messages=[
-            {
-                'role': 'user',
-                'content': 'Generate a prompt as if a user would. Place the prompt in JSON format '
-                           '```json{"prompt": "_____"}```',
-            },
-        ])
+    def generate_prompt(self, model_handle: str, _num_attempts=0):
 
-        prompt = self._extract_prompt(response['message']['content'])
+        if _num_attempts > 4:
+            return None
+
+        response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
+            system="""
+            Generate a prompt as if a user would. Place the prompt in JSON format
+            ```json{"prompt": "_____"}```
+            """,
+            message=""
+        )
+
+        prompt = self._extract_prompt(response)
+
         if prompt:
             return prompt
         else:
-            return self.generate_prompt(model_handle)
+            return self.generate_prompt(model_handle, _num_attempts=_num_attempts+1)
 
-    def optimize_prompt(self, model_handle: str, unoptimized_prompt: str):
-        response = ollama.chat(model=model_handle, messages=[
-            {
-                'role': 'user',
-                'content': 'Given this prompt, optimize it so that you, when asked, '
-                           'would produce the best possible answer: BEGINNING OF PROMPT\n'
-                           f'{unoptimized_prompt}\n'
-                           'END OF PROMPT\n'
-                            ' Place your optimized prompt in JSON format '
-                           '```json{"prompt": "_____"}```'
-            }
-        ])
+    def optimize_prompt(self, model_handle: str, unoptimized_prompt: str, _num_attempts=0):
 
-        prompt = self._extract_prompt(response['message']['content'])
+        if _num_attempts > 4:
+            return None
+
+        response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
+            system='Given a prompt, optimize it so that you, when asked, would produce the best possible answer:',
+            message='BEGINNING OF PROMPT\n'
+                    f'{unoptimized_prompt}\n'
+                    'END OF PROMPT\n'
+                    'Place your optimized prompt in JSON format '
+                    '```json{"prompt": "_____"}```'
+        )
+
+        prompt = self._extract_prompt(response)
         if prompt:
             return prompt
         else:
-            return self.generate_prompt(model_handle)
-
+            return self.generate_prompt(model_handle, _num_attempts=_num_attempts+1)
 
     @staticmethod
     def _extract_rating(text):
@@ -103,29 +116,22 @@ class ResponseEvaluationTensor:
                 return None
         else:
             # attempt to extract `rating: #` out of the text
-            
-                pattern = re.compile(r'(?:"rating"|rating)\s*:\s*(?:"?(\d+)"?)(?:\s*,|\s*\n|\s*$)', re.IGNORECASE)
-    
-                match = pattern.search(text)
-                if match:
-                    return int(match.group(1))
-                else:
-                     print("NO JSON string found")
-                     return None
+            pattern = re.compile(r'(?:"rating"|rating)\s*:\s*(?:"?(\d+)"?)(?:\s*,|\s*\n|\s*$)', re.IGNORECASE)
+
+            match = pattern.search(text)
+            if match:
+                return int(match.group(1))
+            else:
+                logger.warning("NO JSON string found")
+                return None
 
     def rate_response(self, model_handle: str, model_prompt: str, model_output: str, _num_attempts=0):
-        
+
+        if _num_attempts > 4:
+            return None
+
         user_message = """You are a content grader who will output a rating between 1 to 5 indicating how well the provided content follows the user query.
         Output a 5 if the content fully followed the user query, and output a 1 if it doesn't follow it at all."""
-
-        if _num_attempts:
-            user_message += ("""Be sure to rate this using the following JSON dict format:
-                             ```json
-                             {
-                                \"rationale\" : describe why you chose the rating,
-                                \"rating\" : Integer representing the rating between 1 to 5
-                             }```
-            """) * _num_attempts
 
         user_message += """Output the following JSON dictionary, make sure you include ```json {...}``` around the JSON string: 
         ```json
@@ -138,12 +144,9 @@ class ResponseEvaluationTensor:
         user_message += (f"given the following user query:\n{model_prompt}. "
                          f"provide a rating for this Context:\n{model_output}")
 
-        response = ollama.chat(model=model_handle, messages=[
-            {
-                "role": "user",
-                "content": user_message
-            }
-        ])['message']['content']
+        response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
+            system=user_message, message="")
+
         print(f"Response - {response}")
         # extract rating
         rating_value = self._extract_rating(response)
@@ -159,33 +162,56 @@ class ResponseEvaluationTensor:
                 _num_attempts=_num_attempts + 1
             )
 
-    def compute_response_evaluation_tensor(self):
-        return
+    def compute_response_evaluation_tensor(self, num_trials=5):
+        models = self.together_models
+
+        ratings_array = np.zeros(shape=(len(models), len(models), num_trials), dtype=np.float64)
+
+        for row_idx, auditing_model in enumerate(models):
+            for col_idx, model_under_test in enumerate(models):
+                for trial in range(num_trials):
+                    p = self.generate_prompt(model_handle=auditing_model.model_handle)
+                    if p is None:
+                        logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
+                        ratings_array[row_idx, col_idx] = np.nan
+                        continue
+                    logger.info(f"generated prompt: {p}")
+
+                    p_optim = self.optimize_prompt(auditing_model.model_handle, p)
+                    if p_optim is None:
+                        logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
+                        ratings_array[row_idx, col_idx] = np.nan
+                        continue
+                    logger.info(f"optimized prompt: {p_optim}")
+
+                    # DUT
+                    response = TogetherClient(
+                        api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
+                        system="",
+                        message=p)
+
+                    rating = self.rate_response(model_handle=auditing_model.model_handle,
+                                                model_prompt=p,
+                                                model_output=response)
+
+                    ratings_array[row_idx, col_idx, trial] = rating
+
+                    logger.info(
+                        f"Auditor: {models[row_idx].model_handle}, "
+                        f"Model Under Test: {models[col_idx].model_handle}, "
+                        f"Trial: {trial}, "
+                        f"Rating: {rating}"
+                    )
+
+        return ratings_array, self.together_models
 
     def run_eval(self):
         pass
 
 
 if __name__ == "__main__":
-
-    model_to_test = "gemma:2b"
     evaluator = ResponseEvaluationTensor()
-    p = evaluator.generate_prompt(model_to_test)
-    print(p)
+    ratings_array, models = evaluator.compute_response_evaluation_tensor(num_trials=5)
 
-    # p_optim = evaluator.optimize_prompt(model_to_test, p)
-    # print(p_optim)
-
-    # DUT
-    response = ollama.chat(model=model_to_test, messages=[
-        {
-            'role': 'user',
-            'content': p
-        }
-    ])['message']['content']
-
-    print(response)
-
-    rating = evaluator.rate_response(model_to_test, p, response)
-
-    print(rating)
+    print(ratings_array)
+    print()

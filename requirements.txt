@@ -1,4 +1,9 @@
+anthropic
+mistralai
 numpy
 scipy
 ollama
+openai
+tenacity
+together
 setuptools
