@@ -52,7 +52,7 @@ class ResponseEvaluationTensor:
             # LLMModel(model_handle="mistralai/Mixtral-8x22B", MMLU_score=0.7781),
             LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
-            LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.423),
+            LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
             LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
         ]
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
