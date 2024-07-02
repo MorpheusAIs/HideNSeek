@@ -46,9 +46,11 @@ class ResponseEvaluationTensor:
         self.together_models = [
             # LLMModel(model_handle="mistralai/Mixtral-8x7B-v0.1", MMLU_score=0.6859),
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
-            # LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842)
+            # LLMModel(model_handle="mistralai/Mixtral-8x22B", MMLU_score=0.7781),
+            LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
-            # LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
+            LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.423),
+            LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
         ]
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
 
@@ -67,17 +69,21 @@ class ResponseEvaluationTensor:
 
         return None
 
-    def generate_prompt(self, model_handle: str, _num_attempts=0):
+    def generate_prompt(self, model_handle: str, past_prompts=[], _num_attempts=0):
 
         if _num_attempts > 4:
             return None
+        
+        message_str = ""
+        if past_prompts:
+            message_str = f"here are your past prompts: {past_prompts}"
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system="""
             Generate a new prompt about any topics that users are interested in. Place the prompt in JSON format
             ```json{"prompt": "_____"}```
             """,
-            message=""
+            message=message_str
         )
 
         prompt = self._extract_prompt(response)
@@ -171,13 +177,14 @@ class ResponseEvaluationTensor:
 
         for row_idx, auditing_model in enumerate(models):
             for col_idx, model_under_test in enumerate(models):
+                past_prompts = []
                 for trial in range(num_trials):
-                    past_prompts = []
-                    p = self.generate_prompt(model_handle=auditing_model.model_handle,)
+                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
                     if p is None:
                         logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
                         ratings_array[row_idx, col_idx] = np.nan
                         continue
+                    past_prompts.append(p)
                     logger.info(f"generated prompt: {p}")
 
                     p_optim = self.optimize_prompt(auditing_model.model_handle, p)
@@ -191,10 +198,10 @@ class ResponseEvaluationTensor:
                     response = TogetherClient(
                         api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
                         system="",
-                        message=p)
+                        message=p_optim)
 
                     rating = self.rate_response(model_handle=auditing_model.model_handle,
-                                                model_prompt=p,
+                                                model_prompt=p_optim,
                                                 model_output=response)
 
                     ratings_array[row_idx, col_idx, trial] = rating
@@ -291,93 +298,6 @@ class ResponseEvaluationTensor:
         }
         
         return results
-
-    # def compare_model_scores(self, tensor, ref_idx, test_idx, similarity_threshold=0.05):
-    #     M, _, T = tensor.shape  # M models, T trials
-
-    #     # 1. Extract relevant data
-    #     ref_ratings = tensor[ref_idx, :, :]  # All ratings given by ref model
-    #     ref_scores = tensor[:, ref_idx, :]   # All scores received by ref model
-
-    #     test_ratings = tensor[test_idx, :, :]  # All ratings given by test model
-    #     test_scores = tensor[:, test_idx, :]   # All scores received by test model
-
-    #     # Remove self-evaluations and evaluations of the other model being compared
-    #     ref_ratings = np.delete(ref_ratings, test_idx, axis=0)
-    #     ref_scores = np.delete(ref_scores, test_idx, axis=0)
-    #     test_ratings = np.delete(test_ratings, ref_idx, axis=0)
-    #     test_scores = np.delete(test_scores, ref_idx, axis=0)
-
-    #     # Flatten the arrays for easier analysis
-    #     ref_ratings = ref_ratings.flatten()
-    #     ref_scores = ref_scores.flatten()
-    #     test_ratings = test_ratings.flatten()
-    #     test_scores = test_scores.flatten()
-
-    #     # 2. Compare the distributions
-
-    #     # 2.1 Calculate summary statistics
-    #     ref_ratings_mean, ref_ratings_std = np.mean(ref_ratings), np.std(ref_ratings)
-    #     ref_scores_mean, ref_scores_std = np.mean(ref_scores), np.std(ref_scores)
-    #     test_ratings_mean, test_ratings_std = np.mean(test_ratings), np.std(test_ratings)
-    #     test_scores_mean, test_scores_std = np.mean(test_scores), np.std(test_scores)
-
-    #     # 2.2 Perform statistical tests
-    #     ratings_t_stat, ratings_p_value = ttest_ind(ref_ratings, test_ratings)
-    #     scores_t_stat, scores_p_value = ttest_ind(ref_scores, test_scores)
-
-    #     ratings_ks_stat, ratings_ks_p_value = ks_2samp(ref_ratings, test_ratings)
-    #     scores_ks_stat, scores_ks_p_value = ks_2samp(ref_scores, test_scores)
-
-    #     # 2.3 Visualize the distributions
-    #     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-
-    #     ax1.hist(ref_ratings, alpha=0.5, label=f'Model {ref_idx} ratings')
-    #     ax1.hist(test_ratings, alpha=0.5, label=f'Model {test_idx} ratings')
-    #     ax1.set_title('Distribution of Ratings Given')
-    #     ax1.set_xlabel('Ratings')
-    #     ax1.set_ylabel('Frequency')
-    #     ax1.legend()
-
-    #     ax2.hist(ref_scores, alpha=0.5, label=f'Model {ref_idx} scores')
-    #     ax2.hist(test_scores, alpha=0.5, label=f'Model {test_idx} scores')
-    #     ax2.set_title('Distribution of Scores Received')
-    #     ax2.set_xlabel('Scores')
-    #     ax2.set_ylabel('Frequency')
-    #     ax2.legend()
-
-    #     plt.tight_layout()
-    #     plt.show()
-
-    #     # 3. Define similarity criteria
-    #     ratings_mean_diff = abs(ref_ratings_mean - test_ratings_mean)
-    #     ratings_std_diff = abs(ref_ratings_std - test_ratings_std)
-    #     scores_mean_diff = abs(ref_scores_mean - test_scores_mean)
-    #     scores_std_diff = abs(ref_scores_std - test_scores_std)
-
-    #     is_similar = (
-    #         ratings_mean_diff < similarity_threshold and
-    #         ratings_std_diff < similarity_threshold and
-    #         scores_mean_diff < similarity_threshold and
-    #         scores_std_diff < similarity_threshold and
-    #         ratings_p_value > similarity_threshold and
-    #         scores_p_value > similarity_threshold and
-    #         ratings_ks_p_value > similarity_threshold and
-    #         scores_ks_p_value > similarity_threshold
-    #     )
-
-    #     return {
-    #         'is_similar': is_similar,
-    #         'ratings_mean_difference': ratings_mean_diff,
-    #         'ratings_std_difference': ratings_std_diff,
-    #         'scores_mean_difference': scores_mean_diff,
-    #         'scores_std_difference': scores_std_diff,
-    #         'ratings_t_test_p_value': ratings_p_value,
-    #         'scores_t_test_p_value': scores_p_value,
-    #         'ratings_ks_test_p_value': ratings_ks_p_value,
-    #         'scores_ks_test_p_value': scores_ks_p_value
-    #     }
-
 
     @staticmethod
     def test_self_preference_bias(tensor):
@@ -477,11 +397,16 @@ class ResponseEvaluationTensor:
 
 if __name__ == "__main__":
     evaluator = ResponseEvaluationTensor()
-    ratings_array, models = evaluator.compute_response_evaluation_tensor(num_trials=4)
+    ratings_array, models = evaluator.compute_response_evaluation_tensor(num_trials=2)
+    similarity = np.eye(len(models))
 
-    print(ratings_array)
-    print()
-
-    similarity = evaluator.compare_model_scores(ratings_array, 0, 1)
     print(similarity)
-    print()
+    for idx, model in enumerate(models):
+            for j in range(idx+1, len(evaluator.together_models)):
+                print(f"comparing {model.model_handle} to {models[j].model_handle}")
+
+                is_sim = int(evaluator.compare_model_scores(ratings_array, idx, j)["is_similar"])
+                similarity[idx, j] = is_sim
+                similarity[j, idx] = is_sim
+    
+    print(similarity)
