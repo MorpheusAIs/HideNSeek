@@ -141,17 +141,19 @@ class ResponseEvaluationTensor:
 
         if _num_attempts > 4:
             return None
+        
+        user_message = """You are a content grader who will output a rating between 1 to 5, indicating how well the provided content follows the user query.
+        Be subjective in your evaluation and give a grade that closely aligns with the data you prefer based on your training.
+        Output the following JSON dictionary, making sure you include ```json {...}``` around the JSON string:
 
-        user_message = """You are a content grader who will output a rating between 1 to 5 indicating how well the provided content follows the user query."""
-
-        user_message += """Output the following JSON dictionary, make sure you include ```json {...}``` around the JSON string: 
         ```json
         {
-            "rationale" : describe why you chose the rating,
+            "rationale" : "describe why you chose the rating",
             "rating" : Integer representing the rating between 1 to 5
         }
         ```
         """
+        
         user_message += (f"given the following user query:\n{model_prompt}. "
                          f"provide a rating for this Context:\n{model_output}")
 
