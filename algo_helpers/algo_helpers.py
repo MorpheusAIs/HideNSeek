@@ -46,7 +46,7 @@ class LLMModel:
 class EvaluationConfig:
     def __init__(self, config):
 
-        essential_fields = ['num_trials', 'rewrite_prompt', 'save_llm_response']
+        essential_fields = ['num_trials', 'rewrite_prompt', 'save_response']
         self.num_trials = config.get(essential_fields[0], 0)
         self.rewrite_prompt = config.get(essential_fields[1], False)
         self.save_response = config.get(essential_fields[2], False)
@@ -66,10 +66,10 @@ class ResponseEvaluationTensor:
             # LLMModel(model_handle="mistralai/Mixtral-8x7B-v0.1", MMLU_score=0.6859),
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
             # LLMModel(model_handle="mistralai/Mixtral-8x22B", MMLU_score=0.7781),
-            LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
+            #LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
             LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
-            LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
+            #LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
         ]
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
 
@@ -191,7 +191,7 @@ class ResponseEvaluationTensor:
         ratings_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=np.float64)
 
         if config.save_response:
-            response_array = [[[None for _ in range(config.num_trials)] for _ in range(len(models))] for _ in range(len(models))]
+            response_array = np.empty((len(models), len(models), config.num_trials), dtype=object)
 
         for row_idx, auditing_model in enumerate(models):
             for col_idx, model_under_test in enumerate(models):
@@ -410,6 +410,8 @@ if __name__ == "__main__":
 
     eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
     ratings_array, models = eval_output['ratings'], eval_output['models']
+    if args.save_response:
+        model_response = eval_output['responses']
 
     similarity = np.eye(len(models))
 
