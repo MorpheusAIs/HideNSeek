@@ -7,3 +7,5 @@ openai
 tenacity
 together
 setuptools
+python-dotenv
+networkx
