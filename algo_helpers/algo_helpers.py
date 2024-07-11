@@ -11,8 +11,8 @@ from together import Together
 
 import pandas as pd
 from scipy.stats import ttest_ind, ttest_ind, mannwhitneyu, t, sem
-
-
+from dotenv import load_dotenv
+import argparse
 
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
@@ -37,11 +37,27 @@ def extract_json(text):  # FIXME, duplicate from llm/llm_provider_ranking_experi
             return None
     return None
 
-
 class LLMModel:
     def __init__(self, model_handle, MMLU_score):
         self.model_handle = model_handle
         self.MMLU_score = MMLU_score
+
+
+class EvaluationConfig:
+    def __init__(self, config):
+
+        essential_fields = ['num_trials', 'rewrite_prompt', 'save_response']
+        self.num_trials = config.get(essential_fields[0], 0)
+        self.rewrite_prompt = config.get(essential_fields[1], False)
+        self.save_response = config.get(essential_fields[2], False)
+        # Store additional attributes
+        self.additional_attributes = {k: v for k, v in config.items() 
+                                      if k not in essential_fields}
+
+    def __getattr__(self, item):
+        if item in self.additional_attributes:
+            return self.additional_attributes[item]
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{item}'")
 
 
 class ResponseEvaluationTensor:
@@ -50,10 +66,10 @@ class ResponseEvaluationTensor:
             # LLMModel(model_handle="mistralai/Mixtral-8x7B-v0.1", MMLU_score=0.6859),
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
             # LLMModel(model_handle="mistralai/Mixtral-8x22B", MMLU_score=0.7781),
-            LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
+            #LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
             LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
-            LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
+            #LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
         ]
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
 
@@ -137,53 +153,50 @@ class ResponseEvaluationTensor:
                 logger.warning("NO JSON string found")
                 return None
 
-    def rate_response(self, model_handle: str, model_prompt: str, model_output: str, _num_attempts=0):
+    def rate_response(self, model_handle: str, model_prompt: str, model_output: str, retry_count=5):
 
-        if _num_attempts > 4:
-            return None
-        
-        user_message = """You are a content grader who will output a rating between 1 to 5, indicating how well the provided content follows the user query.
-        Be subjective in your evaluation and give a grade that closely aligns with the data you prefer based on your training.
-        Output the following JSON dictionary, making sure you include ```json {...}``` around the JSON string:
+        _num_attempts = 0
 
-        ```json
-        {
-            "rationale" : "describe why you chose the rating",
-            "rating" : Integer representing the rating between 1 to 5
-        }
-        ```
-        """
-        
-        user_message += (f"given the following user query:\n{model_prompt}. "
-                         f"provide a rating for this Context:\n{model_output}")
+        while _num_attempts < retry_count:
+            user_message = """You are a content grader who will output a rating between 1 to 5 indicating how well the provided content follows the user query."""
 
-        response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
-            system=user_message, message="")
+            user_message += """Output the following JSON dictionary, make sure you include ```json {...}``` around the JSON string: 
+            ```json
+            {
+                "rationale" : describe why you chose the rating,
+                "rating" : Integer representing the rating between 1 to 5
+            }
+            ```
+            """
+            user_message += (f"given the following user query:\n{model_prompt}. "
+                            f"provide a rating for this Context:\n{model_output}")
 
-        print(f"Response - {response}")
-        # extract rating
-        rating_value = self._extract_rating(response)
+            response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
+                system=user_message, message="")
 
-        # ensure it's an int between 1 and 5 (incl.)
-        if isinstance(rating_value, int) and 1 <= rating_value <= 5:
-            return rating_value
-        else:
-            return self.rate_response(
-                model_handle,
-                model_prompt,
-                model_output,
-                _num_attempts=_num_attempts + 1
-            )
+            print(f"Response - {response}")
+            # extract rating
+            rating_value = self._extract_rating(response)
 
-    def compute_response_evaluation_tensor(self, num_trials=5):
+            # ensure it's an int between 1 and 5 (incl.)
+            if isinstance(rating_value, int) and 1 <= rating_value <= 5:
+                return rating_value
+            _num_attempts=_num_attempts + 1
+
+        return None
+
+    def compute_response_evaluation_tensor(self, config: EvaluationConfig):
         models = self.together_models
 
-        ratings_array = np.zeros(shape=(len(models), len(models), num_trials), dtype=np.float64)
+        ratings_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=np.float64)
+
+        if config.save_response:
+            response_array = np.empty((len(models), len(models), config.num_trials), dtype=object)
 
         for row_idx, auditing_model in enumerate(models):
             for col_idx, model_under_test in enumerate(models):
                 past_prompts = []
-                for trial in range(num_trials):
+                for trial in range(config.num_trials):
                     p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
                     if p is None:
                         logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
@@ -192,12 +205,15 @@ class ResponseEvaluationTensor:
                     past_prompts.append(p)
                     logger.info(f"generated prompt: {p}")
 
-                    p_optim = self.optimize_prompt(auditing_model.model_handle, p)
-                    if p_optim is None:
-                        logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
-                        ratings_array[row_idx, col_idx] = 0
-                        continue
-                    logger.info(f"optimized prompt: {p_optim}")
+                    if config.rewrite_prompt:
+                        p_optim = self.optimize_prompt(auditing_model.model_handle, p)
+                        if p_optim is None:
+                            logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
+                            ratings_array[row_idx, col_idx] = 0
+                            continue
+                        logger.info(f"optimized prompt: {p_optim}")
+                    else:
+                        p_optim = p
 
                     # DUT
                     response = TogetherClient(
@@ -210,6 +226,8 @@ class ResponseEvaluationTensor:
                                                 model_output=response)
 
                     ratings_array[row_idx, col_idx, trial] = rating
+                    if config.save_response:
+                        response_array[row_idx, col_idx, trial] = response
 
                     logger.info(
                         f"Auditor: {models[row_idx].model_handle}, "
@@ -218,7 +236,15 @@ class ResponseEvaluationTensor:
                         f"Rating: {rating}"
                     )
 
-        return ratings_array, self.together_models
+        output_obj = {
+            'ratings': ratings_array,
+            'models': self.together_models,            
+        }
+        
+        if config.save_response:
+            output_obj['responses'] = response_array
+
+        return output_obj
 
     def run_eval(self):
         pass
@@ -356,13 +382,37 @@ class ResponseEvaluationTensor:
         plt.tight_layout()
         plt.savefig(output_file, format='png', dpi=300, bbox_inches='tight')
         plt.close()
-        print(f"Visualization saved as {output_file}")
-    
+        print(f"Visualization saved as {output_file}")    
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
+    parser.add_argument('--rewrite_prompt', action='store_true', help="Prevent prompt rewrite")
+    parser.add_argument('--save_response', action='store_true', help="Save LLM Response")
+    parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
+
+    args = parser.parse_args()
+    return args
 
 
 if __name__ == "__main__":
+    args = parse_args()
+
+    load_dotenv(args.config_path)
+
     evaluator = ResponseEvaluationTensor()
-    ratings_array, models = evaluator.compute_response_evaluation_tensor(num_trials=2)
+    evaluation_config = EvaluationConfig({
+        "num_trials": args.num_trials,
+        "rewrite_prompt": args.rewrite_prompt,
+        "save_response": args.save_response
+    })
+
+    eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
+    ratings_array, models = eval_output['ratings'], eval_output['models']
+    if args.save_response:
+        model_response = eval_output['responses']
+
     similarity = np.eye(len(models))
 
     print(similarity)
