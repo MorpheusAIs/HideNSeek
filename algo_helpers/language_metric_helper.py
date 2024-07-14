@@ -94,7 +94,7 @@ def word_metric_question_wise(models: Dict[str, List[str]], model_names: List[st
 
     return similar_models
 
-def evaluate_similarity(response_array: np.ndarray, model_names: List[str], cosine_threshold: float = 0.25, approach: str = 'global', vectorization_approach: str = 'tf_idf', debug: bool = False) -> Dict[Tuple[str, str], Dict[str, float]]:
+def evaluate_similarity(response_array: np.ndarray, model_names: List[str], cosine_threshold: float = 0.53, approach: str = 'question_wise', vectorization_approach: str = 'tf_idf', debug: bool = False) -> Dict[Tuple[str, str], Dict[str, float]]:
     models, response_mapping, all_responses = extract_responses(response_array, model_names)
     if debug:
         print(f'All responses length: {len(all_responses)}')

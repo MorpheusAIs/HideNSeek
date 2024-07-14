@@ -20,6 +20,7 @@ sys.path.append(parent_dir)
 
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
+from language_metric_helper import evaluate_similarity
 
 logger = setup_logger(__name__)
 
@@ -393,11 +394,17 @@ class ResponseEvaluationTensor:
 def parse_args():
     parser = argparse.ArgumentParser()
 
+    # General
     parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
     parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend'], default='relevance', help='Which task to run. Relevance runs the prompt relevance subtask whereas lang_trend focuses on LLM language trends')
+    parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
+
+    # Task arguments
     parser.add_argument('--rewrite_prompt', action='store_true', help="Prevent prompt rewrite")
     parser.add_argument('--save_response', action='store_true', help="Save LLM Response")
-    parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
+    parser.add_argument('--vectorizer', choices = ['tf_idf', None], default='tf_idf', help='Vectorization approach taken for language stat identification')    
+    parser.add_argument('--lang_metric_approach', type=str, default='question_wise', help="Evaluation strategy for calculating language stats")
+    parser.add_argument('--lang_metric_cosine', type=float, default=0.53)
 
     args = parser.parse_args()
     return args
@@ -417,22 +424,39 @@ if __name__ == "__main__":
 
     eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
     ratings_array, models = eval_output['ratings'], eval_output['models']
+    model_response = None
     if args.save_response:
         model_response = eval_output['responses']
         np.save(f'response_trials_{args.num_trials}.npy', model_response)
 
-    similarity = np.eye(len(models))
+    if args.task == 'relevance':
+        similarity = np.eye(len(models))
 
-    print(similarity)
-    for idx, model in enumerate(models):
-            for j in range(idx+1, len(evaluator.together_models)):
-                print(f"comparing {model.model_handle} to {models[j].model_handle}")
+        print(similarity)
+        for idx, model in enumerate(models):
+                for j in range(idx+1, len(evaluator.together_models)):
+                    print(f"comparing {model.model_handle} to {models[j].model_handle}")
 
-                is_sim = int(evaluator.compare_model_scores(ratings_array, idx, j)["is_similar"])
-                similarity[idx, j] = is_sim
-                similarity[j, idx] = is_sim
-    
-    print(similarity)
+                    is_sim = int(evaluator.compare_model_scores(ratings_array, idx, j)["is_similar"])
+                    similarity[idx, j] = is_sim
+                    similarity[j, idx] = is_sim
+        
+        print(similarity)
 
-    groups = evaluator.group_models(similarity, models)
-    evaluator.visualize_groups(groups)
+        groups = evaluator.group_models(similarity, models)
+        evaluator.visualize_groups(groups)
+    elif args.task == 'lang_trend':
+        assert model_response is not None, "Model responses must be recorded to do language analysis"
+        assert args.vectorizer is not None, "Must select a vectorizer option for lang stat"
+
+        model_names = [model.model_handle for model in evaluator.together_models]
+        eval_results = evaluate_similarity(response_array=model_response,
+                                           model_names=model_names,
+                                           cosine_threshold=args.lang_metric_cosine,
+                                           approach=args.lang_metric_approach,
+                                           vectorization_approach=args.vectorizer,
+                                           debug=True)
+        
+        print(eval_results)
+    else:
+        raise ValueError(f"Unsupported Task: {args.task}")
