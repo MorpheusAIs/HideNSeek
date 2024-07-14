@@ -14,6 +14,10 @@ from scipy.stats import ttest_ind, ttest_ind, mannwhitneyu, t, sem
 from dotenv import load_dotenv
 import argparse
 
+import sys
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+sys.path.append(parent_dir)
+
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
 
@@ -66,10 +70,12 @@ class ResponseEvaluationTensor:
             # LLMModel(model_handle="mistralai/Mixtral-8x7B-v0.1", MMLU_score=0.6859),
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
             # LLMModel(model_handle="mistralai/Mixtral-8x22B", MMLU_score=0.7781),
-            #LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
+            LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
             LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
             #LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
+            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.2', MMLU_score=0.73),
+            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.73)            
         ]
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
 
@@ -388,6 +394,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
+    parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend'], default='relevance', help='Which task to run. Relevance runs the prompt relevance subtask whereas lang_trend focuses on LLM language trends')
     parser.add_argument('--rewrite_prompt', action='store_true', help="Prevent prompt rewrite")
     parser.add_argument('--save_response', action='store_true', help="Save LLM Response")
     parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
@@ -412,6 +419,7 @@ if __name__ == "__main__":
     ratings_array, models = eval_output['ratings'], eval_output['models']
     if args.save_response:
         model_response = eval_output['responses']
+        np.save(f'response_trials_{args.num_trials}.npy', model_response)
 
     similarity = np.eye(len(models))
 
