@@ -5,6 +5,18 @@ HideNSeek is a Model Fidelity Verification Algorithm for Probabilistically Finge
 
 ![LLM Groupings discovered](model_groups.png)
 
+Sample Usage
+
+To run the relevance computation task
+```
+python algo_helpers.py --config_path <config_path_with_together_ai_key> --num_trials 3 --task relevance  --output_path model_image_groups.png
+```
+
+To run language metrics task with ngram vectorizer
+```
+python algo_helpers.py --config_path <config_path_with_together_ai_key> --save_response --num_trials 3 --task lang_trend --lang_metric_cosine 0.55 --vectorizer ngram --output_path metrics_question_wise_trials_3_run_2.json
+```
+
 ### Algorithm
 
 The algorithm consists of the following steps:
