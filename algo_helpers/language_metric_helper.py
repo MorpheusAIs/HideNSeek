@@ -1,9 +1,8 @@
 import itertools
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict, Tuple
-from algo_helpers import ResponseEvaluationTensor
 
 def extract_responses(response_array: np.ndarray, model_names: List[str]) -> Tuple[Dict[str, List[str]], List[str], List[str]]:
     models = {}
@@ -25,6 +24,11 @@ def generate_similarity_matrix(responses: List[str], approach: str = 'tf_idf') -
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(responses)
         similarity_matrix = cosine_similarity(tfidf_matrix)
+        return similarity_matrix
+    elif approach == 'ngram':
+        vectorizer = CountVectorizer(ngram_range=(1, 3))
+        ngram_matrix = vectorizer.fit_transform(responses)
+        similarity_matrix = cosine_similarity(ngram_matrix)
         return similarity_matrix
     else:
         raise ValueError(f"Unsupported approach: {approach}")
@@ -61,7 +65,7 @@ def word_metric_global(models: Dict[str, List[str]], response_mapping: List[str]
                     if debug:
                         print(model_1, model_2, average_similarity)
                     similar_models[(model_1, model_2)] = {
-                        'is_similar': average_similarity > cosine_threshold,
+                        'is_similar': bool(average_similarity > cosine_threshold),
                         'match_score': average_similarity
                     }
 
@@ -88,7 +92,7 @@ def word_metric_question_wise(models: Dict[str, List[str]], model_names: List[st
             if debug:
                 print(model_names[i], model_names[j], average_similarity_scores[i, j])
             similar_models[(model_names[i], model_names[j])] = {
-                'is_similar': average_similarity_scores[i, j] > cosine_threshold,
+                'is_similar': bool(average_similarity_scores[i, j] > cosine_threshold),
                 'match_score': average_similarity_scores[i, j]
             }
 
@@ -107,3 +111,10 @@ def evaluate_similarity(response_array: np.ndarray, model_names: List[str], cosi
     else:
         raise ValueError(f"Unsupported approach: {approach}")
 
+def convert_to_json_format(metrics: Dict[Tuple[str], Dict]) -> List[Dict[Tuple[str], Dict]]:
+    output = []
+    for models, vals in metrics.items():
+        a = {'models': models}
+        a.update(vals)
+        output.append(a)
+    return output

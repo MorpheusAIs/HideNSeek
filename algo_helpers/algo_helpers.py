@@ -20,7 +20,7 @@ sys.path.append(parent_dir)
 
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
-from language_metric_helper import evaluate_similarity
+from language_metric_helper import evaluate_similarity, convert_to_json_format
 
 logger = setup_logger(__name__)
 
@@ -402,9 +402,10 @@ def parse_args():
     # Task arguments
     parser.add_argument('--rewrite_prompt', action='store_true', help="Prevent prompt rewrite")
     parser.add_argument('--save_response', action='store_true', help="Save LLM Response")
-    parser.add_argument('--vectorizer', choices = ['tf_idf', None], default='tf_idf', help='Vectorization approach taken for language stat identification')    
+    parser.add_argument('--vectorizer', choices = ['tf_idf', 'ngram'], default='tf_idf', help='Vectorization approach taken for language stat identification')    
     parser.add_argument('--lang_metric_approach', type=str, default='question_wise', help="Evaluation strategy for calculating language stats")
     parser.add_argument('--lang_metric_cosine', type=float, default=0.53)
+    parser.add_argument('--output_path', type=str)
 
     args = parser.parse_args()
     return args
@@ -444,7 +445,12 @@ if __name__ == "__main__":
         print(similarity)
 
         groups = evaluator.group_models(similarity, models)
-        evaluator.visualize_groups(groups)
+
+        if args.output_path:
+            evaluator.visualize_groups(groups, output_file=output_path)
+        else:
+            evaluator.visualize_groups(groups)
+
     elif args.task == 'lang_trend':
         assert model_response is not None, "Model responses must be recorded to do language analysis"
         assert args.vectorizer is not None, "Must select a vectorizer option for lang stat"
@@ -457,6 +463,7 @@ if __name__ == "__main__":
                                            vectorization_approach=args.vectorizer,
                                            debug=True)
         
-        print(eval_results)
+        if args.output_path:
+            json.dump(convert_to_json_format(eval_results), open(args.output_path, 'w'))
     else:
         raise ValueError(f"Unsupported Task: {args.task}")
