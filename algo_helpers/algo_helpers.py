@@ -241,8 +241,8 @@ class ResponseEvaluationTensor:
                     f"Rating: {rating}"
                 )
 
-        max_workers = 5  # Adjust this value based on your system's capabilities
-        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Adjust this value based on your system's capabilities
+        with futures.ThreadPoolExecutor(max_workers=config.max_workers) as executor:
             future_to_pair = {
                 executor.submit(process_model_pair, row_idx, col_idx): (row_idx, col_idx)
                 for row_idx in range(len(models))
@@ -419,6 +419,7 @@ def parse_args():
     parser.add_argument('--lang_metric_approach', type=str, default='question_wise', help="Evaluation strategy for calculating language stats")
     parser.add_argument('--lang_metric_cosine', type=float, default=0.53)
     parser.add_argument('--output_path', type=str)
+    parser.add_argument('--num_workers', type=int, default=5, help="Number of concurrent experiments to run")
 
     args = parser.parse_args()
     return args
@@ -433,7 +434,8 @@ if __name__ == "__main__":
     evaluation_config = EvaluationConfig({
         "num_trials": args.num_trials,
         "rewrite_prompt": args.rewrite_prompt,
-        "save_response": args.save_response
+        "save_response": args.save_response,
+        "num_workers": args.num_workers
     })
 
     eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
