@@ -14,10 +14,6 @@ from scipy.stats import ttest_ind, ttest_ind, mannwhitneyu, t, sem
 from dotenv import load_dotenv
 import argparse
 
-import sys
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
-sys.path.append(parent_dir)
-
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
 from language_metric_helper import evaluate_similarity, convert_to_json_format
@@ -75,8 +71,8 @@ class ResponseEvaluationTensor:
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
             LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
             #LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
-            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.2', MMLU_score=0.73),
-            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.73)            
+            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.2', MMLU_score=0.6),
+            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.6)            
         ]
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
 
