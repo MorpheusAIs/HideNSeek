@@ -16,7 +16,7 @@ import argparse
 
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
-from language_metric_helper import evaluate_similarity, convert_to_json_format
+from algo_helpers.language_metric_helper import evaluate_similarity, convert_to_json_format
 
 logger = setup_logger(__name__)
 
