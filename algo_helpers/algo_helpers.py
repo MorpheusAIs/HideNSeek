@@ -1,3 +1,4 @@
+from concurrent import futures
 import os
 import re
 from typing import List, Tuple
@@ -187,7 +188,7 @@ class ResponseEvaluationTensor:
             _num_attempts=_num_attempts + 1
 
         return None
-
+    
     def compute_response_evaluation_tensor(self, config: EvaluationConfig):
         models = self.together_models
 
@@ -196,48 +197,64 @@ class ResponseEvaluationTensor:
         if config.save_response:
             response_array = np.empty((len(models), len(models), config.num_trials), dtype=object)
 
-        for row_idx, auditing_model in enumerate(models):
-            for col_idx, model_under_test in enumerate(models):
-                past_prompts = []
-                for trial in range(config.num_trials):
-                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
-                    if p is None:
-                        logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
-                        ratings_array[row_idx, col_idx] = np.nan
+        def process_model_pair(row_idx, col_idx):
+            auditing_model = models[row_idx]
+            model_under_test = models[col_idx]
+            past_prompts = []
+            for trial in range(config.num_trials):
+                p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
+                if p is None:
+                    logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
+                    ratings_array[row_idx, col_idx] = np.nan
+                    continue
+                past_prompts.append(p)
+                logger.info(f"generated prompt: {p}")
+
+                if config.rewrite_prompt:
+                    p_optim = self.optimize_prompt(auditing_model.model_handle, p)
+                    if p_optim is None:
+                        logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
+                        ratings_array[row_idx, col_idx] = 0
                         continue
-                    past_prompts.append(p)
-                    logger.info(f"generated prompt: {p}")
+                    logger.info(f"optimized prompt: {p_optim}")
+                else:
+                    p_optim = p
 
-                    if config.rewrite_prompt:
-                        p_optim = self.optimize_prompt(auditing_model.model_handle, p)
-                        if p_optim is None:
-                            logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
-                            ratings_array[row_idx, col_idx] = 0
-                            continue
-                        logger.info(f"optimized prompt: {p_optim}")
-                    else:
-                        p_optim = p
+                # DUT
+                response = TogetherClient(
+                    api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
+                    system="",
+                    message=p_optim)
 
-                    # DUT
-                    response = TogetherClient(
-                        api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
-                        system="",
-                        message=p_optim)
+                rating = self.rate_response(model_handle=auditing_model.model_handle,
+                                            model_prompt=p_optim,
+                                            model_output=response)
 
-                    rating = self.rate_response(model_handle=auditing_model.model_handle,
-                                                model_prompt=p_optim,
-                                                model_output=response)
+                ratings_array[row_idx, col_idx, trial] = rating
+                if config.save_response:
+                    response_array[row_idx, col_idx, trial] = response
 
-                    ratings_array[row_idx, col_idx, trial] = rating
-                    if config.save_response:
-                        response_array[row_idx, col_idx, trial] = response
+                logger.info(
+                    f"Auditor: {models[row_idx].model_handle}, "
+                    f"Model Under Test: {models[col_idx].model_handle}, "
+                    f"Trial: {trial}, "
+                    f"Rating: {rating}"
+                )
 
-                    logger.info(
-                        f"Auditor: {models[row_idx].model_handle}, "
-                        f"Model Under Test: {models[col_idx].model_handle}, "
-                        f"Trial: {trial}, "
-                        f"Rating: {rating}"
-                    )
+        max_workers = 5  # Adjust this value based on your system's capabilities
+        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_pair = {
+                executor.submit(process_model_pair, row_idx, col_idx): (row_idx, col_idx)
+                for row_idx in range(len(models))
+                for col_idx in range(len(models))
+            }
+
+            for future in futures.as_completed(future_to_pair):
+                row_idx, col_idx = future_to_pair[future]
+                try:
+                    future.result()  # This will raise any exception that occurred during execution
+                except Exception as e:
+                    logger.error(f"Error processing model pair ({row_idx}, {col_idx}): {e}")
 
         output_obj = {
             'ratings': ratings_array,
