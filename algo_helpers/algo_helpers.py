@@ -242,7 +242,7 @@ class ResponseEvaluationTensor:
                 )
 
         # Adjust this value based on your system's capabilities
-        with futures.ThreadPoolExecutor(max_workers=config.max_workers) as executor:
+        with futures.ThreadPoolExecutor(max_workers=config.num_workers) as executor:
             future_to_pair = {
                 executor.submit(process_model_pair, row_idx, col_idx): (row_idx, col_idx)
                 for row_idx in range(len(models))
