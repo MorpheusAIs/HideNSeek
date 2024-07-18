@@ -19,12 +19,6 @@ def extract_responses(response_array: np.ndarray, model_names: List[str]) -> Tup
 
     return models, response_mapping, all_responses
 
-
-def build_global_vectorizer(all_responses: List[str], approach: str = "tf_idf") -> CountVectorizer:
-    # Note: TfidfVectorizer is a sublcass of `CountVectorizer`
-    model = TfidfVectorizer() if approach == "tf_idf" else CountVectorizer()
-    return model.fit(all_responses)
-
 def generate_similarity_matrix(responses: List[str], approach: str = 'tf_idf', 
                                vectorizer: CountVectorizer = None) -> np.ndarray:
     if vectorizer:
@@ -90,13 +84,10 @@ def word_metric_question_wise(models: Dict[str, List[str]], model_names: List[st
     num_models = len(model_names)
     num_questions = len(models[model_names[0]])
     similarity_scores = np.zeros((num_models, num_models))
-    all_responses = [response for model_responses in models.values() for response in model_responses if response is not None]
-    global_vectorizer = build_global_vectorizer(all_responses, vectorization_approach)
 
     for q in range(num_questions):
         question_responses = [models[model][q] for model in model_names]
-        question_similarity_matrix = generate_similarity_matrix(question_responses, vectorization_approach, 
-                                                                vectorizer=global_vectorizer)
+        question_similarity_matrix = generate_similarity_matrix(question_responses, vectorization_approach)
         similarity_scores += question_similarity_matrix
 
     average_similarity_scores = similarity_scores / num_questions
