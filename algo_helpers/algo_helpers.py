@@ -65,13 +65,11 @@ class EvaluationConfig:
 class ResponseEvaluationTensor:
     def __init__(self):
         self.together_models = [
-            # LLMModel(model_handle="mistralai/Mixtral-8x7B-v0.1", MMLU_score=0.6859),
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
-            # LLMModel(model_handle="mistralai/Mixtral-8x22B", MMLU_score=0.7781),
             LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
             LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
-            #LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
+            LLMModel(model_handle="google/gemma-2-9b-it", MMLU_score=0.71),
             LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.2', MMLU_score=0.6),
             LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.6)            
         ]
@@ -90,6 +88,7 @@ class ResponseEvaluationTensor:
         else:
             logger.warning("No valid JSON found in the text.")
 
+        print(f"extract JSON returning None")
         return None
 
     def generate_prompt(self, model_handle: str, past_prompts=[], _num_attempts=0):
@@ -119,7 +118,8 @@ class ResponseEvaluationTensor:
     def optimize_prompt(self, model_handle: str, unoptimized_prompt: str, _num_attempts=0):
 
         if _num_attempts > 4:
-            return None
+            print("Opt prompt out of attempts")
+            return ""
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system='Given a prompt, optimize it so that you, when asked, would produce the best possible answer:',
@@ -140,12 +140,9 @@ class ResponseEvaluationTensor:
     def _extract_rating(text):
         json_str = extract_json(text)
         if json_str:
-            rating_value = json_str.get('rating')
-            if rating_value:
-                rating_value = int(rating_value)
-                return int(rating_value)
-            else:
-                return None
+            rating_value = json_str.get('rating', 1)
+            rating_value = int(rating_value)
+            return int(rating_value)
         else:
             # attempt to extract `rating: #` out of the text
             pattern = re.compile(r'(?:"rating"|rating)\s*:\s*(?:"?(\d+)"?)(?:\s*,|\s*\n|\s*$)', re.IGNORECASE)
@@ -155,7 +152,7 @@ class ResponseEvaluationTensor:
                 return int(match.group(1))
             else:
                 logger.warning("NO JSON string found")
-                return None
+                return 1
 
     def rate_response(self, model_handle: str, model_prompt: str, model_output: str, retry_count=5):
 
@@ -186,8 +183,8 @@ class ResponseEvaluationTensor:
             if isinstance(rating_value, int) and 1 <= rating_value <= 5:
                 return rating_value
             _num_attempts=_num_attempts + 1
-
-        return None
+        print("In rate respones, would be returning None")
+        return ""
     
     def compute_response_evaluation_tensor(self, config: EvaluationConfig):
         models = self.together_models
@@ -197,64 +194,63 @@ class ResponseEvaluationTensor:
         if config.save_response:
             response_array = np.empty((len(models), len(models), config.num_trials), dtype=object)
 
-        def process_model_pair(row_idx, col_idx):
+        def process_auditor(row_idx):
             auditing_model = models[row_idx]
-            model_under_test = models[col_idx]
             past_prompts = []
-            for trial in range(config.num_trials):
-                p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
-                if p is None:
-                    logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
-                    ratings_array[row_idx, col_idx] = np.nan
-                    continue
-                past_prompts.append(p)
-                logger.info(f"generated prompt: {p}")
-
-                if config.rewrite_prompt:
-                    p_optim = self.optimize_prompt(auditing_model.model_handle, p)
-                    if p_optim is None:
-                        logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
-                        ratings_array[row_idx, col_idx] = 0
+            
+            for col_idx in range(len(models)):
+                model_under_test = models[col_idx]
+                
+                for trial in range(config.num_trials):
+                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
+                    if p is None:
+                        logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
+                        ratings_array[row_idx, col_idx, trial] = np.nan
                         continue
-                    logger.info(f"optimized prompt: {p_optim}")
-                else:
-                    p_optim = p
+                    past_prompts.append(p)
+                    logger.info(f"Auditor {auditing_model.model_handle} generated prompt: {p}")
 
-                # DUT
-                response = TogetherClient(
-                    api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
-                    system="",
-                    message=p_optim)
+                    if config.rewrite_prompt:
+                        p_optim = self.optimize_prompt(auditing_model.model_handle, p)
+                        if p_optim is None:
+                            logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
+                            ratings_array[row_idx, col_idx, trial] = 0
+                            continue
+                        logger.info(f"Optimized prompt: {p_optim}")
+                    else:
+                        p_optim = p
 
-                rating = self.rate_response(model_handle=auditing_model.model_handle,
-                                            model_prompt=p_optim,
-                                            model_output=response)
+                    # DUT
+                    response = TogetherClient(
+                        api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
+                        system="",
+                        message=p_optim)
 
-                ratings_array[row_idx, col_idx, trial] = rating
-                if config.save_response:
-                    response_array[row_idx, col_idx, trial] = response
+                    rating = self.rate_response(model_handle=auditing_model.model_handle,
+                                                model_prompt=p_optim,
+                                                model_output=response)
 
-                logger.info(
-                    f"Auditor: {models[row_idx].model_handle}, "
-                    f"Model Under Test: {models[col_idx].model_handle}, "
-                    f"Trial: {trial}, "
-                    f"Rating: {rating}"
-                )
+                    ratings_array[row_idx, col_idx, trial] = rating
+                    if config.save_response:
+                        response_array[row_idx, col_idx, trial] = response
 
-        # Adjust this value based on your system's capabilities
+                    logger.info(
+                        f"Auditor: {auditing_model.model_handle}, "
+                        f"Model Under Test: {model_under_test.model_handle}, "
+                        f"Trial: {trial}, "
+                        f"Rating: {rating}"
+                    )
+
+        # Parallel execution of auditors
         with futures.ThreadPoolExecutor(max_workers=config.num_workers) as executor:
-            future_to_pair = {
-                executor.submit(process_model_pair, row_idx, col_idx): (row_idx, col_idx)
-                for row_idx in range(len(models))
-                for col_idx in range(len(models))
-            }
+            future_to_auditor = {executor.submit(process_auditor, row_idx): row_idx for row_idx in range(len(models))}
 
-            for future in futures.as_completed(future_to_pair):
-                row_idx, col_idx = future_to_pair[future]
+            for future in futures.as_completed(future_to_auditor):
+                row_idx = future_to_auditor[future]
                 try:
                     future.result()  # This will raise any exception that occurred during execution
                 except Exception as e:
-                    logger.error(f"Error processing model pair ({row_idx}, {col_idx}): {e}")
+                    logger.error(f"Error processing auditor {models[row_idx].model_handle}: {e}")
 
         output_obj = {
             'ratings': ratings_array,
@@ -462,7 +458,7 @@ if __name__ == "__main__":
         groups = evaluator.group_models(similarity, models)
 
         if args.output_path:
-            evaluator.visualize_groups(groups, output_file=output_path)
+            evaluator.visualize_groups(groups, output_file=args.output_path)
         else:
             evaluator.visualize_groups(groups)
 
