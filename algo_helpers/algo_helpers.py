@@ -1,5 +1,6 @@
 from concurrent import futures
 import os
+import random
 import re
 from typing import List, Tuple
 import json
@@ -186,8 +187,11 @@ class ResponseEvaluationTensor:
         print("In rate respones, would be returning None")
         return ""
     
-    def compute_response_evaluation_tensor(self, config: EvaluationConfig):
-        models = self.together_models
+    def compute_response_evaluation_tensor(self, config: EvaluationConfig, model_indices=None):
+        if model_indices is None:
+            models = self.together_models
+        else:
+            models = [self.together_models[i] for i in model_indices]
 
         ratings_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=np.float64)
 
@@ -241,20 +245,19 @@ class ResponseEvaluationTensor:
                         f"Rating: {rating}"
                     )
 
-        # Parallel execution of auditors
         with futures.ThreadPoolExecutor(max_workers=config.num_workers) as executor:
             future_to_auditor = {executor.submit(process_auditor, row_idx): row_idx for row_idx in range(len(models))}
 
             for future in futures.as_completed(future_to_auditor):
                 row_idx = future_to_auditor[future]
                 try:
-                    future.result()  # This will raise any exception that occurred during execution
+                    future.result()
                 except Exception as e:
                     logger.error(f"Error processing auditor {models[row_idx].model_handle}: {e}")
 
         output_obj = {
             'ratings': ratings_array,
-            'models': self.together_models,            
+            'models': models,            
         }
         
         if config.save_response:
@@ -399,13 +402,85 @@ class ResponseEvaluationTensor:
         plt.savefig(output_file, format='png', dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Visualization saved as {output_file}")    
+    
+
+    def model_duplication_identification_test(self, config: EvaluationConfig, max_additional_models: int = 3, num_tests: int = 5,
+                                              approach: str = 'question_wise', vectorization_approach: str = 'tf_idf',
+                                              cosine_threshold: float = 0.25):
+        results = []
+
+        if not config.save_response:
+            config.save_response = True
+
+        for _ in range(num_tests):
+            for k in range(1, max_additional_models + 1):
+                # Randomly select a model to test and duplicate
+                test_model_index = random.randint(0, len(self.together_models) - 1)
+                logger.info(f"Testing model {self.together_models[test_model_index].model_handle}")
+                
+                # Select k-1 other unique models
+                other_model_indices = random.sample([i for i in range(len(self.together_models)) if i != test_model_index], k-1)
+                
+                # Combine test model (duplicated) with other models
+                test_set = [test_model_index, test_model_index] + other_model_indices
+                logger.info(f"also testing out {[self.together_models[o_idx].model_handle for o_idx in other_model_indices]}")
+
+                # Compute response evaluation tensor for the selected models
+                evaluation = self.compute_response_evaluation_tensor(config, model_indices=test_set)
+                response_array = evaluation['responses']
+                response_array[response_array == None] = ""
+                models = evaluation['models']
+
+                # Perform similarity evaluation
+                eval_results = evaluate_similarity(
+                    response_array=response_array,
+                    model_names=[model.model_handle for model in models],
+                    cosine_threshold=cosine_threshold,
+                    approach=approach,
+                    vectorization_approach=vectorization_approach,
+                    debug=False
+                )
+
+                # Analyze results
+                correct_identifications = 0
+                total_comparisons = 0
+                pairwise_results = []
+
+                test_model_name = models[0].model_handle  # The test model is always the first in the list
+                for (model1, model2), result in eval_results.items():
+                    if model1 == test_model_name or model2 == test_model_name:
+                        is_same_model = model1 == model2
+                        correctly_identified = result['is_similar'] == is_same_model
+                        correct_identifications += int(correctly_identified)
+                        total_comparisons += 1
+                        pairwise_results.append({
+                            "model1": model1,
+                            "model2": model2,
+                            "is_similar": result['is_similar'],
+                            "correctly_identified": correctly_identified,
+                            "match_score": result['match_score']
+                        })
+
+                accuracy = correct_identifications / total_comparisons if total_comparisons > 0 else 0
+
+                results.append({
+                    'k': k,
+                    'test_model': test_model_name,
+                    'other_models': [model.model_handle for model in models[2:]],  # Exclude the duplicated test model
+                    'accuracy': accuracy,
+                    'pairwise_results': pairwise_results
+                })
+
+        return results
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
 
     # General
     parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
-    parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend'], default='relevance', help='Which task to run. Relevance runs the prompt relevance subtask whereas lang_trend focuses on LLM language trends')
+    parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend', 'model_duplication'], 
+                default='relevance', help='Which task to run')
     parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
 
     # Task arguments
@@ -416,6 +491,10 @@ def parse_args():
     parser.add_argument('--lang_metric_cosine', type=float, default=0.53)
     parser.add_argument('--output_path', type=str)
     parser.add_argument('--num_workers', type=int, default=5, help="Number of concurrent experiments to run")
+    parser.add_argument('--max_additional_models', type=int, default=3, 
+                    help="Maximum number of additional models for duplication test")
+    parser.add_argument('--num_duplication_tests', type=int, default=5, 
+                        help="Number of test runs for duplication test")
 
     args = parser.parse_args()
     return args
@@ -434,12 +513,15 @@ if __name__ == "__main__":
         "num_workers": args.num_workers
     })
 
-    eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
-    ratings_array, models = eval_output['ratings'], eval_output['models']
-    model_response = None
-    if args.save_response:
-        model_response = eval_output['responses']
-        np.save(f'response_trials_{args.num_trials}.npy', model_response)
+    if args.task in ["relevance", "lang_trend"]:
+        eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
+        ratings_array, models = eval_output['ratings'], eval_output['models']
+        model_response = None
+
+        if args.save_response:
+            model_response = eval_output['responses']
+            model_response[model_response == None] = "" # replace None with an empty string
+            np.save(f'response_trials_{args.num_trials}.npy', model_response)
 
     if args.task == 'relevance':
         similarity = np.eye(len(models))
@@ -476,5 +558,19 @@ if __name__ == "__main__":
         
         if args.output_path:
             json.dump(convert_to_json_format(eval_results), open(args.output_path, 'w'))
+
+    elif args.task == 'model_duplication':
+        results = evaluator.model_duplication_identification_test(
+            evaluation_config,
+            max_additional_models=args.max_additional_models,
+            num_tests=args.num_duplication_tests,
+            approach=args.lang_metric_approach,
+            vectorization_approach=args.vectorizer,
+            cosine_threshold=args.lang_metric_cosine
+        )
+        print(json.dumps(results, indent=2))
+        # Optionally, save results to a file
+        with open('model_duplication_test_results.json', 'w') as f:
+            json.dump(results, f, indent=2)
     else:
         raise ValueError(f"Unsupported Task: {args.task}")
