@@ -1,5 +1,6 @@
 from concurrent import futures
 import os
+import random
 import re
 from typing import List, Tuple
 import json
@@ -65,13 +66,11 @@ class EvaluationConfig:
 class ResponseEvaluationTensor:
     def __init__(self):
         self.together_models = [
-            # LLMModel(model_handle="mistralai/Mixtral-8x7B-v0.1", MMLU_score=0.6859),
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
-            # LLMModel(model_handle="mistralai/Mixtral-8x22B", MMLU_score=0.7781),
             LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
             LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
-            #LLMModel(model_handle="google/gemma-2b-it", MMLU_score=0.423),
+            LLMModel(model_handle="google/gemma-2-9b-it", MMLU_score=0.71),
             LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.2', MMLU_score=0.6),
             LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.6)            
         ]
@@ -90,6 +89,7 @@ class ResponseEvaluationTensor:
         else:
             logger.warning("No valid JSON found in the text.")
 
+        print(f"extract JSON returning None")
         return None
 
     def generate_prompt(self, model_handle: str, past_prompts=[], _num_attempts=0):
@@ -119,7 +119,8 @@ class ResponseEvaluationTensor:
     def optimize_prompt(self, model_handle: str, unoptimized_prompt: str, _num_attempts=0):
 
         if _num_attempts > 4:
-            return None
+            print("Opt prompt out of attempts")
+            return ""
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system='Given a prompt, optimize it so that you, when asked, would produce the best possible answer:',
@@ -140,12 +141,9 @@ class ResponseEvaluationTensor:
     def _extract_rating(text):
         json_str = extract_json(text)
         if json_str:
-            rating_value = json_str.get('rating')
-            if rating_value:
-                rating_value = int(rating_value)
-                return int(rating_value)
-            else:
-                return None
+            rating_value = json_str.get('rating', 1)
+            rating_value = int(rating_value)
+            return int(rating_value)
         else:
             # attempt to extract `rating: #` out of the text
             pattern = re.compile(r'(?:"rating"|rating)\s*:\s*(?:"?(\d+)"?)(?:\s*,|\s*\n|\s*$)', re.IGNORECASE)
@@ -155,7 +153,7 @@ class ResponseEvaluationTensor:
                 return int(match.group(1))
             else:
                 logger.warning("NO JSON string found")
-                return None
+                return 1
 
     def rate_response(self, model_handle: str, model_prompt: str, model_output: str, retry_count=5):
 
@@ -186,79 +184,80 @@ class ResponseEvaluationTensor:
             if isinstance(rating_value, int) and 1 <= rating_value <= 5:
                 return rating_value
             _num_attempts=_num_attempts + 1
-
-        return None
+        print("In rate respones, would be returning None")
+        return ""
     
-    def compute_response_evaluation_tensor(self, config: EvaluationConfig):
-        models = self.together_models
+    def compute_response_evaluation_tensor(self, config: EvaluationConfig, model_indices=None):
+        if model_indices is None:
+            models = self.together_models
+        else:
+            models = [self.together_models[i] for i in model_indices]
 
         ratings_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=np.float64)
 
         if config.save_response:
             response_array = np.empty((len(models), len(models), config.num_trials), dtype=object)
 
-        def process_model_pair(row_idx, col_idx):
+        def process_auditor(row_idx):
             auditing_model = models[row_idx]
-            model_under_test = models[col_idx]
             past_prompts = []
-            for trial in range(config.num_trials):
-                p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
-                if p is None:
-                    logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
-                    ratings_array[row_idx, col_idx] = np.nan
-                    continue
-                past_prompts.append(p)
-                logger.info(f"generated prompt: {p}")
-
-                if config.rewrite_prompt:
-                    p_optim = self.optimize_prompt(auditing_model.model_handle, p)
-                    if p_optim is None:
-                        logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
-                        ratings_array[row_idx, col_idx] = 0
+            
+            for col_idx in range(len(models)):
+                model_under_test = models[col_idx]
+                
+                for trial in range(config.num_trials):
+                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
+                    if p is None:
+                        logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
+                        ratings_array[row_idx, col_idx, trial] = np.nan
                         continue
-                    logger.info(f"optimized prompt: {p_optim}")
-                else:
-                    p_optim = p
+                    past_prompts.append(p)
+                    logger.info(f"Auditor {auditing_model.model_handle} generated prompt: {p}")
 
-                # DUT
-                response = TogetherClient(
-                    api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
-                    system="",
-                    message=p_optim)
+                    if config.rewrite_prompt:
+                        p_optim = self.optimize_prompt(auditing_model.model_handle, p)
+                        if p_optim is None:
+                            logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
+                            ratings_array[row_idx, col_idx, trial] = 0
+                            continue
+                        logger.info(f"Optimized prompt: {p_optim}")
+                    else:
+                        p_optim = p
 
-                rating = self.rate_response(model_handle=auditing_model.model_handle,
-                                            model_prompt=p_optim,
-                                            model_output=response)
+                    # DUT
+                    response = TogetherClient(
+                        api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
+                        system="",
+                        message=p_optim)
 
-                ratings_array[row_idx, col_idx, trial] = rating
-                if config.save_response:
-                    response_array[row_idx, col_idx, trial] = response
+                    rating = self.rate_response(model_handle=auditing_model.model_handle,
+                                                model_prompt=p_optim,
+                                                model_output=response)
 
-                logger.info(
-                    f"Auditor: {models[row_idx].model_handle}, "
-                    f"Model Under Test: {models[col_idx].model_handle}, "
-                    f"Trial: {trial}, "
-                    f"Rating: {rating}"
-                )
+                    ratings_array[row_idx, col_idx, trial] = rating
+                    if config.save_response:
+                        response_array[row_idx, col_idx, trial] = response
 
-        # Adjust this value based on your system's capabilities
-        with futures.ThreadPoolExecutor(max_workers=config.max_workers) as executor:
-            future_to_pair = {
-                executor.submit(process_model_pair, row_idx, col_idx): (row_idx, col_idx)
-                for row_idx in range(len(models))
-                for col_idx in range(len(models))
-            }
+                    logger.info(
+                        f"Auditor: {auditing_model.model_handle}, "
+                        f"Model Under Test: {model_under_test.model_handle}, "
+                        f"Trial: {trial}, "
+                        f"Rating: {rating}"
+                    )
 
-            for future in futures.as_completed(future_to_pair):
-                row_idx, col_idx = future_to_pair[future]
+        with futures.ThreadPoolExecutor(max_workers=config.num_workers) as executor:
+            future_to_auditor = {executor.submit(process_auditor, row_idx): row_idx for row_idx in range(len(models))}
+
+            for future in futures.as_completed(future_to_auditor):
+                row_idx = future_to_auditor[future]
                 try:
-                    future.result()  # This will raise any exception that occurred during execution
+                    future.result()
                 except Exception as e:
-                    logger.error(f"Error processing model pair ({row_idx}, {col_idx}): {e}")
+                    logger.error(f"Error processing auditor {models[row_idx].model_handle}: {e}")
 
         output_obj = {
             'ratings': ratings_array,
-            'models': self.together_models,            
+            'models': models,            
         }
         
         if config.save_response:
@@ -403,13 +402,85 @@ class ResponseEvaluationTensor:
         plt.savefig(output_file, format='png', dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Visualization saved as {output_file}")    
+    
+
+    def model_duplication_identification_test(self, config: EvaluationConfig, max_additional_models: int = 3, num_tests: int = 5,
+                                              approach: str = 'question_wise', vectorization_approach: str = 'tf_idf',
+                                              cosine_threshold: float = 0.25):
+        results = []
+
+        if not config.save_response:
+            config.save_response = True
+
+        for _ in range(num_tests):
+            for k in range(1, max_additional_models + 1):
+                # Randomly select a model to test and duplicate
+                test_model_index = random.randint(0, len(self.together_models) - 1)
+                logger.info(f"Testing model {self.together_models[test_model_index].model_handle}")
+                
+                # Select k-1 other unique models
+                other_model_indices = random.sample([i for i in range(len(self.together_models)) if i != test_model_index], k-1)
+                
+                # Combine test model (duplicated) with other models
+                test_set = [test_model_index, test_model_index] + other_model_indices
+                logger.info(f"also testing out {[self.together_models[o_idx].model_handle for o_idx in other_model_indices]}")
+
+                # Compute response evaluation tensor for the selected models
+                evaluation = self.compute_response_evaluation_tensor(config, model_indices=test_set)
+                response_array = evaluation['responses']
+                response_array[response_array == None] = ""
+                models = evaluation['models']
+
+                # Perform similarity evaluation
+                eval_results = evaluate_similarity(
+                    response_array=response_array,
+                    model_names=[model.model_handle for model in models],
+                    cosine_threshold=cosine_threshold,
+                    approach=approach,
+                    vectorization_approach=vectorization_approach,
+                    debug=False
+                )
+
+                # Analyze results
+                correct_identifications = 0
+                total_comparisons = 0
+                pairwise_results = []
+
+                test_model_name = models[0].model_handle  # The test model is always the first in the list
+                for (model1, model2), result in eval_results.items():
+                    if model1 == test_model_name or model2 == test_model_name:
+                        is_same_model = model1 == model2
+                        correctly_identified = result['is_similar'] == is_same_model
+                        correct_identifications += int(correctly_identified)
+                        total_comparisons += 1
+                        pairwise_results.append({
+                            "model1": model1,
+                            "model2": model2,
+                            "is_similar": result['is_similar'],
+                            "correctly_identified": correctly_identified,
+                            "match_score": result['match_score']
+                        })
+
+                accuracy = correct_identifications / total_comparisons if total_comparisons > 0 else 0
+
+                results.append({
+                    'k': k,
+                    'test_model': test_model_name,
+                    'other_models': [model.model_handle for model in models[2:]],  # Exclude the duplicated test model
+                    'accuracy': accuracy,
+                    'pairwise_results': pairwise_results
+                })
+
+        return results
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
 
     # General
     parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
-    parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend'], default='relevance', help='Which task to run. Relevance runs the prompt relevance subtask whereas lang_trend focuses on LLM language trends')
+    parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend', 'model_duplication'], 
+                default='relevance', help='Which task to run')
     parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
 
     # Task arguments
@@ -420,6 +491,10 @@ def parse_args():
     parser.add_argument('--lang_metric_cosine', type=float, default=0.53)
     parser.add_argument('--output_path', type=str)
     parser.add_argument('--num_workers', type=int, default=5, help="Number of concurrent experiments to run")
+    parser.add_argument('--max_additional_models', type=int, default=3, 
+                    help="Maximum number of additional models for duplication test")
+    parser.add_argument('--num_duplication_tests', type=int, default=5, 
+                        help="Number of test runs for duplication test")
 
     args = parser.parse_args()
     return args
@@ -438,12 +513,15 @@ if __name__ == "__main__":
         "num_workers": args.num_workers
     })
 
-    eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
-    ratings_array, models = eval_output['ratings'], eval_output['models']
-    model_response = None
-    if args.save_response:
-        model_response = eval_output['responses']
-        np.save(f'response_trials_{args.num_trials}.npy', model_response)
+    if args.task in ["relevance", "lang_trend"]:
+        eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
+        ratings_array, models = eval_output['ratings'], eval_output['models']
+        model_response = None
+
+        if args.save_response:
+            model_response = eval_output['responses']
+            model_response[model_response == None] = "" # replace None with an empty string
+            np.save(f'response_trials_{args.num_trials}.npy', model_response)
 
     if args.task == 'relevance':
         similarity = np.eye(len(models))
@@ -462,7 +540,7 @@ if __name__ == "__main__":
         groups = evaluator.group_models(similarity, models)
 
         if args.output_path:
-            evaluator.visualize_groups(groups, output_file=output_path)
+            evaluator.visualize_groups(groups, output_file=args.output_path)
         else:
             evaluator.visualize_groups(groups)
 
@@ -480,5 +558,19 @@ if __name__ == "__main__":
         
         if args.output_path:
             json.dump(convert_to_json_format(eval_results), open(args.output_path, 'w'))
+
+    elif args.task == 'model_duplication':
+        results = evaluator.model_duplication_identification_test(
+            evaluation_config,
+            max_additional_models=args.max_additional_models,
+            num_tests=args.num_duplication_tests,
+            approach=args.lang_metric_approach,
+            vectorization_approach=args.vectorizer,
+            cosine_threshold=args.lang_metric_cosine
+        )
+        print(json.dumps(results, indent=2))
+        # Optionally, save results to a file
+        with open('model_duplication_test_results.json', 'w') as f:
+            json.dump(results, f, indent=2)
     else:
         raise ValueError(f"Unsupported Task: {args.task}")

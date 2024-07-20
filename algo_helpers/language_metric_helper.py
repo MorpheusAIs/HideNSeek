@@ -19,7 +19,13 @@ def extract_responses(response_array: np.ndarray, model_names: List[str]) -> Tup
 
     return models, response_mapping, all_responses
 
-def generate_similarity_matrix(responses: List[str], approach: str = 'tf_idf') -> np.ndarray:
+def generate_similarity_matrix(responses: List[str], approach: str = 'tf_idf', 
+                               vectorizer: CountVectorizer = None) -> np.ndarray:
+    if vectorizer:
+        transformed_matrix = vectorizer.transform(responses)
+        similarity_matrix = cosine_similarity(transformed_matrix)
+        return similarity_matrix
+    
     if approach == 'tf_idf':
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(responses)
