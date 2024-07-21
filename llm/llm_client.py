@@ -115,7 +115,7 @@ class TogetherClient(Client):
             generate_args["model"] = self.model
         
         if "temperature" not in generate_args:
-            generate_args["temperature"] = 0.3
+            generate_args["temperature"] = 1.0
 
         response = self.client.chat.completions.create(
             model=generate_args["model"],
