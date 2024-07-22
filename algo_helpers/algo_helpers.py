@@ -110,7 +110,7 @@ class ResponseEvaluationTensor:
             "Come up with a creative question to ask the user"
         ]
 
-        choice_seed = seed_prompts[3]  #random.choice(seed_prompts)
+        choice_seed = random.choice(seed_prompts)
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system=f"""{choice_seed}. Place the prompt in JSON format
