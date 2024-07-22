@@ -434,7 +434,7 @@ class ResponseEvaluationTensor:
         if not config.save_response:
             config.save_response = True
 
-        for test_model_index in len(self.together_models):
+        for test_model_index in range(len(self.together_models)):
             for k in range(1, max_additional_models + 1):
                 # Randomly select a model to test and duplicate
                 logger.info(f"Testing model {self.together_models[test_model_index].name}")
@@ -458,7 +458,7 @@ class ResponseEvaluationTensor:
                 eval_results = evaluate_similarity(
                     response_array=response_array,
                     model_names=[model.name for model in models],
-                    cosine_threshold=cosine_threshold,
+                    cosine_threshold=None,
                     approach=approach,
                     vectorization_approach=vectorization_approach,
                     debug=True
