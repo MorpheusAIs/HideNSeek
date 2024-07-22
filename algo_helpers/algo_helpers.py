@@ -70,7 +70,6 @@ class ResponseEvaluationTensor:
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842),
             LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
             LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
-            LLMModel(model_handle="google/gemma-7b-it", MMLU_score=0.643),
             LLMModel(model_handle="google/gemma-2-9b-it", MMLU_score=0.71),
             LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.2', MMLU_score=0.6),
             LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.6)            
