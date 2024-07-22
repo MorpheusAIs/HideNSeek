@@ -111,7 +111,7 @@ class ResponseEvaluationTensor:
             "Come up with a creative question to ask the user"
         ]
 
-        choice_seed = random.choice(seed_prompts)
+        choice_seed = seed_prompts[3]  #random.choice(seed_prompts)
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system=f"""{choice_seed}. Place the prompt in JSON format
@@ -434,10 +434,9 @@ class ResponseEvaluationTensor:
         if not config.save_response:
             config.save_response = True
 
-        for _ in range(num_tests):
+        for test_model_index in len(self.together_models):
             for k in range(1, max_additional_models + 1):
                 # Randomly select a model to test and duplicate
-                test_model_index = random.randint(0, len(self.together_models) - 1)
                 logger.info(f"Testing model {self.together_models[test_model_index].name}")
                 
                 # Select k-1 other unique models
