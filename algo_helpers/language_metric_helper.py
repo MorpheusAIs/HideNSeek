@@ -61,6 +61,8 @@ def word_metric_global(models: Dict[str, List[str]], response_mapping: List[str]
     # Generate similarity matrix
     all_responses = [response for model_responses in models.values() for response in model_responses if response is not None]
     similarity_matrix = generate_similarity_matrix(all_responses, vectorization_approach)
+    if cosine_threshold is None:
+        cosine_threshold = similarity_matrix.max()
 
     # Compare models based on their average similarity score
     for model_1, indices_1 in model_indices.items():
@@ -72,7 +74,7 @@ def word_metric_global(models: Dict[str, List[str]], response_mapping: List[str]
                     if debug:
                         print(model_1, model_2, average_similarity)
                     similar_models[(model_1, model_2)] = {
-                        'is_similar': bool(average_similarity > cosine_threshold),
+                        'is_similar': bool(average_similarity >= cosine_threshold),
                         'match_score': average_similarity
                     }
 
