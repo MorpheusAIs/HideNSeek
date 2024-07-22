@@ -92,6 +92,8 @@ def word_metric_question_wise(models: Dict[str, List[str]], model_names: List[st
         similarity_scores += question_similarity_matrix
 
     average_similarity_scores = similarity_scores / num_questions
+    if cosine_threshold == None:
+        cosine_threshold = average_similarity_scores.max()
 
     similar_models = {}
     for i in range(num_models):
@@ -99,7 +101,7 @@ def word_metric_question_wise(models: Dict[str, List[str]], model_names: List[st
             if debug:
                 print(model_names[i], model_names[j], average_similarity_scores[i, j])
             similar_models[(model_names[i], model_names[j])] = {
-                'is_similar': bool(average_similarity_scores[i, j] > cosine_threshold),
+                'is_similar': bool(average_similarity_scores[i, j] >= cosine_threshold),
                 'match_score': average_similarity_scores[i, j]
             }
 
