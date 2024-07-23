@@ -41,9 +41,10 @@ def extract_json(text):  # FIXME, duplicate from llm/llm_provider_ranking_experi
     return None
 
 class LLMModel:
-    def __init__(self, model_handle, MMLU_score):
+    def __init__(self, model_handle, MMLU_score, name=None):
         self.model_handle = model_handle
         self.MMLU_score = MMLU_score
+        self.name = name or f"{self.model_handle}"
 
 
 class EvaluationConfig:
@@ -101,10 +102,20 @@ class ResponseEvaluationTensor:
         if past_prompts:
             message_str = f"here are your past prompts: {past_prompts}"
 
+        seed_prompts = [
+            "Generate a new prompt about any topics that users are interested in",
+            "Output a conversation starter thats about a short tweet",
+            "Write a short essay topic that is open ended and asks to argue a point",
+            "Create a short question that asks about a topic from a subjective point of view",
+            "Ask the user a question that can be answered by writing out a list of items as a response",
+            "Come up with a creative question to ask the user"
+        ]
+
+        choice_seed = random.choice(seed_prompts)
+
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
-            system="""
-            Generate a new prompt about any topics that users are interested in. Place the prompt in JSON format
-            ```json{"prompt": "_____"}```
+            system=f"""{choice_seed}. Place the prompt in JSON format
+            ```json{{"prompt": "_____"}}```
             """,
             message=message_str
         )
@@ -191,7 +202,18 @@ class ResponseEvaluationTensor:
         if model_indices is None:
             models = self.together_models
         else:
-            models = [self.together_models[i] for i in model_indices]
+            models = []
+            used_names = set()
+            for idx in model_indices:
+                model = self.together_models[idx]
+                if model.name in used_names:
+                    # Clone the model and give it a new name
+                    new_name = f"{model.name}_clone_{len([m for m in models if m.model_handle == model.model_handle])}"
+                    new_model = LLMModel(model.model_handle, model.MMLU_score, new_name)
+                    models.append(new_model)
+                else:
+                    models.append(model)
+                used_names.add(model.name)
 
         ratings_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=np.float64)
 
@@ -208,16 +230,16 @@ class ResponseEvaluationTensor:
                 for trial in range(config.num_trials):
                     p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
                     if p is None:
-                        logger.warning(f"Unable to generate prompt using model handle {auditing_model.model_handle}")
+                        logger.warning(f"Unable to generate prompt using model handle {auditing_model.name}")
                         ratings_array[row_idx, col_idx, trial] = np.nan
                         continue
                     past_prompts.append(p)
-                    logger.info(f"Auditor {auditing_model.model_handle} generated prompt: {p}")
+                    logger.info(f"Auditor {auditing_model.name} generated prompt: {p}")
 
                     if config.rewrite_prompt:
                         p_optim = self.optimize_prompt(auditing_model.model_handle, p)
                         if p_optim is None:
-                            logger.warning(f"Unable to optimize prompt using model handle {auditing_model.model_handle}")
+                            logger.warning(f"Unable to optimize prompt using model handle {auditing_model.name}")
                             ratings_array[row_idx, col_idx, trial] = 0
                             continue
                         logger.info(f"Optimized prompt: {p_optim}")
@@ -239,8 +261,8 @@ class ResponseEvaluationTensor:
                         response_array[row_idx, col_idx, trial] = response
 
                     logger.info(
-                        f"Auditor: {auditing_model.model_handle}, "
-                        f"Model Under Test: {model_under_test.model_handle}, "
+                        f"Auditor: {auditing_model.name}, "
+                        f"Model Under Test: {model_under_test.name}, "
                         f"Trial: {trial}, "
                         f"Rating: {rating}"
                     )
@@ -362,7 +384,7 @@ class ResponseEvaluationTensor:
             if not visited[i]:
                 group = []
                 self._dfs(i, confusion_matrix, visited, group)
-                groups.append([(models[j].model_handle, models[j].MMLU_score) for j in group])
+                groups.append([(models[j].name, models[j].MMLU_score) for j in group])
 
         return groups
 
@@ -416,39 +438,48 @@ class ResponseEvaluationTensor:
             for k in range(1, max_additional_models + 1):
                 # Randomly select a model to test and duplicate
                 test_model_index = random.randint(0, len(self.together_models) - 1)
-                logger.info(f"Testing model {self.together_models[test_model_index].model_handle}")
+                logger.info(f"Testing model {self.together_models[test_model_index].name}")
                 
                 # Select k-1 other unique models
                 other_model_indices = random.sample([i for i in range(len(self.together_models)) if i != test_model_index], k-1)
                 
                 # Combine test model (duplicated) with other models
                 test_set = [test_model_index, test_model_index] + other_model_indices
-                logger.info(f"also testing out {[self.together_models[o_idx].model_handle for o_idx in other_model_indices]}")
+                logger.info(f"also testing out {[self.together_models[o_idx].name for o_idx in other_model_indices]}")
 
                 # Compute response evaluation tensor for the selected models
                 evaluation = self.compute_response_evaluation_tensor(config, model_indices=test_set)
                 response_array = evaluation['responses']
                 response_array[response_array == None] = ""
                 models = evaluation['models']
+                np.save(f'response_trials_{self.together_models[test_model_index].model_handle}_k{k}.npy'.replace("/", "_"), 
+                        response_array)
 
                 # Perform similarity evaluation
                 eval_results = evaluate_similarity(
                     response_array=response_array,
-                    model_names=[model.model_handle for model in models],
+                    model_names=[model.name for model in models],
                     cosine_threshold=cosine_threshold,
                     approach=approach,
                     vectorization_approach=vectorization_approach,
-                    debug=False
+                    debug=True
                 )
 
                 # Analyze results
                 correct_identifications = 0
                 total_comparisons = 0
                 pairwise_results = []
-
-                test_model_name = models[0].model_handle  # The test model is always the first in the list
+                test_model_name = models[0].name  # The test model is always the first in the list
                 for (model1, model2), result in eval_results.items():
-                    if model1 == test_model_name or model2 == test_model_name:
+                    clone1 = model1.find("_clone_")
+                    if clone1 != -1:
+                        model1 = model1[:clone1]
+                    
+                    clone2 = model2.find("_clone_")
+                    if clone2 != -1:
+                        model2 = model2[:clone2]
+                    
+                    if model1 == test_model_name or model2== test_model_name:
                         is_same_model = model1 == model2
                         correctly_identified = result['is_similar'] == is_same_model
                         correct_identifications += int(correctly_identified)
@@ -548,7 +579,7 @@ if __name__ == "__main__":
         assert model_response is not None, "Model responses must be recorded to do language analysis"
         assert args.vectorizer is not None, "Must select a vectorizer option for lang stat"
 
-        model_names = [model.model_handle for model in evaluator.together_models]
+        model_names = [model.name for model in evaluator.together_models]
         eval_results = evaluate_similarity(response_array=model_response,
                                            model_names=model_names,
                                            cosine_threshold=args.lang_metric_cosine,

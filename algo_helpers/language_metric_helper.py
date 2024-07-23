@@ -7,7 +7,8 @@ from typing import List, Dict, Tuple
 def extract_responses(response_array: np.ndarray, model_names: List[str]) -> Tuple[Dict[str, List[str]], List[str], List[str]]:
     models = {}
     for idx in range(len(response_array)):
-        models[model_names[idx]] = list(itertools.chain.from_iterable(response_array[:, idx, :]))
+        model_name = model_names[idx]
+        models[model_name] = list(itertools.chain.from_iterable(response_array[:, idx, :]))
 
     all_responses = []
     response_mapping = []
