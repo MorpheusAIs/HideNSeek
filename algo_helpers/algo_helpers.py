@@ -110,7 +110,8 @@ class ResponseEvaluationTensor:
             "Come up with a creative question to ask the user"
         ]
 
-        choice_seed = random.choice(seed_prompts)
+        # choice_seed = random.choice(seed_prompts)
+        choice_seed = seed_prompts[4]
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system=f"""{choice_seed}. Place the prompt in JSON format
@@ -214,25 +215,28 @@ class ResponseEvaluationTensor:
                     models.append(model)
                 used_names.add(model.name)
 
-        ratings_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=np.float64)
+        prompts_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=object)
+        if config.rating:
+            ratings_array = np.zeros(shape=(len(models), len(models), config.num_trials), dtype=np.float)
+
 
         if config.save_response:
             response_array = np.empty((len(models), len(models), config.num_trials), dtype=object)
 
         def process_auditor(row_idx):
             auditing_model = models[row_idx]
-            past_prompts = []
             
             for col_idx in range(len(models)):
                 model_under_test = models[col_idx]
                 
                 for trial in range(config.num_trials):
-                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=past_prompts)
+                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=prompts_array[row_idx, col_idx, :].tolist())
                     if p is None:
                         logger.warning(f"Unable to generate prompt using model handle {auditing_model.name}")
                         ratings_array[row_idx, col_idx, trial] = np.nan
                         continue
-                    past_prompts.append(p)
+
+                    prompts_array[row_idx, col_idx, trial] = p
                     logger.info(f"Auditor {auditing_model.name} generated prompt: {p}")
 
                     if config.rewrite_prompt:
@@ -250,21 +254,25 @@ class ResponseEvaluationTensor:
                         api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
                         system="",
                         message=p_optim)
-
-                    rating = self.rate_response(model_handle=auditing_model.model_handle,
-                                                model_prompt=p_optim,
-                                                model_output=response)
-
-                    ratings_array[row_idx, col_idx, trial] = rating
+                    
                     if config.save_response:
-                        response_array[row_idx, col_idx, trial] = response
+                            response_array[row_idx, col_idx, trial] = response
+                    
+                    if config.rating:
 
-                    logger.info(
-                        f"Auditor: {auditing_model.name}, "
-                        f"Model Under Test: {model_under_test.name}, "
-                        f"Trial: {trial}, "
-                        f"Rating: {rating}"
-                    )
+                        rating = self.rate_response(model_handle=auditing_model.model_handle,
+                                                    model_prompt=p_optim,
+                                                    model_output=response)
+
+                        ratings_array[row_idx, col_idx, trial] = rating
+
+
+                        logger.info(
+                            f"Auditor: {auditing_model.name}, "
+                            f"Model Under Test: {model_under_test.name}, "
+                            f"Trial: {trial}, "
+                            f"Rating: {rating}"
+                        )
 
         with futures.ThreadPoolExecutor(max_workers=config.num_workers) as executor:
             future_to_auditor = {executor.submit(process_auditor, row_idx): row_idx for row_idx in range(len(models))}
@@ -277,9 +285,12 @@ class ResponseEvaluationTensor:
                     logger.error(f"Error processing auditor {models[row_idx].model_handle}: {e}")
 
         output_obj = {
-            'ratings': ratings_array,
+            'prompts': prompts_array,
             'models': models,            
         }
+
+        if config.rating:
+            output_obj['ratings'] = ratings_array
         
         if config.save_response:
             output_obj['responses'] = response_array
@@ -447,11 +458,14 @@ class ResponseEvaluationTensor:
 
                 # Compute response evaluation tensor for the selected models
                 evaluation = self.compute_response_evaluation_tensor(config, model_indices=test_set)
+                prompts_array = evaluation["prompts"]
                 response_array = evaluation['responses']
                 response_array[response_array == None] = ""
                 models = evaluation['models']
                 np.save(f'response_trials_{self.together_models[test_model_index].model_handle}_k{k}.npy'.replace("/", "_"), 
                         response_array)
+                np.save(f'prompts_trials_{self.together_models[test_model_index].model_handle}_k{k}.npy'.replace("/", "_"), 
+                        prompts_array)
 
                 # Perform similarity evaluation
                 eval_results = evaluate_similarity(
@@ -464,10 +478,10 @@ class ResponseEvaluationTensor:
                 )
 
                 # Analyze results
+                test_model_name = models[0].name  # The test model is always the first in the list
                 correct_identifications = 0
                 total_comparisons = 0
                 pairwise_results = []
-                test_model_name = models[0].name  # The test model is always the first in the list
                 for (model1, model2), result in eval_results.items():
                     clone1 = model1.find("_clone_")
                     if clone1 != -1:
@@ -487,7 +501,8 @@ class ResponseEvaluationTensor:
                             "model2": model2,
                             "is_similar": result['is_similar'],
                             "correctly_identified": correctly_identified,
-                            "match_score": result['match_score']
+                            "match_score": result['match_score'],
+                            "source" : "response"
                         })
 
                 accuracy = correct_identifications / total_comparisons if total_comparisons > 0 else 0
@@ -497,7 +512,55 @@ class ResponseEvaluationTensor:
                     'test_model': test_model_name,
                     'other_models': [model.model_handle for model in models[2:]],  # Exclude the duplicated test model
                     'accuracy': accuracy,
-                    'pairwise_results': pairwise_results
+                    'pairwise_results': pairwise_results,
+                    'type': 'responses'
+                })
+
+            
+                prompts_eval_results = evaluate_similarity(
+                    response_array=prompts_array,
+                    model_names=[model.name for model in models],
+                    cosine_threshold=None,
+                    approach=approach,
+                    vectorization_approach=vectorization_approach,
+                    debug=True
+                )
+
+                correct_identifications = 0
+                total_comparisons = 0
+                pairwise_results = []
+                for (model1, model2), result in prompts_eval_results.items():
+                    clone1 = model1.find("_clone_")
+                    if clone1 != -1:
+                        model1 = model1[:clone1]
+                    
+                    clone2 = model2.find("_clone_")
+                    if clone2 != -1:
+                        model2 = model2[:clone2]
+                    
+                    if model1 == test_model_name or model2== test_model_name:
+                        is_same_model = model1 == model2
+                        correctly_identified = result['is_similar'] == is_same_model
+                        correct_identifications += int(correctly_identified)
+                        total_comparisons += 1
+                        pairwise_results.append({
+                            "model1": model1,
+                            "model2": model2,
+                            "is_similar": result['is_similar'],
+                            "correctly_identified": correctly_identified,
+                            "match_score": result['match_score'],
+                            "source" : "prompt"
+                        })
+
+                accuracy = correct_identifications / total_comparisons if total_comparisons > 0 else 0
+
+                results.append({
+                    'k': k,
+                    'test_model': test_model_name,
+                    'other_models': [model.model_handle for model in models[2:]],  # Exclude the duplicated test model
+                    'accuracy': accuracy,
+                    'pairwise_results': pairwise_results,
+                    'type': 'prompt'
                 })
 
         return results
@@ -515,6 +578,7 @@ def parse_args():
     # Task arguments
     parser.add_argument('--rewrite_prompt', action='store_true', help="Prevent prompt rewrite")
     parser.add_argument('--save_response', action='store_true', help="Save LLM Response")
+    parser.add_argument('--rating', action='store_true', help="run ratings for the models")
     parser.add_argument('--vectorizer', choices = ['tf_idf', 'ngram'], default='tf_idf', help='Vectorization approach taken for language stat identification')    
     parser.add_argument('--lang_metric_approach', type=str, default='question_wise', help="Evaluation strategy for calculating language stats")
     parser.add_argument('--lang_metric_cosine', type=float, default=0.53)
@@ -539,20 +603,25 @@ if __name__ == "__main__":
         "num_trials": args.num_trials,
         "rewrite_prompt": args.rewrite_prompt,
         "save_response": args.save_response,
+        "rating": args.rating,
         "num_workers": args.num_workers
     })
 
     if args.task in ["relevance", "lang_trend"]:
         eval_output = evaluator.compute_response_evaluation_tensor(evaluation_config)
-        ratings_array, models = eval_output['ratings'], eval_output['models']
+        models = eval_output['models']
+        prompts = eval_output["prompts"]
         model_response = None
 
         if args.save_response:
             model_response = eval_output['responses']
             model_response[model_response == None] = "" # replace None with an empty string
             np.save(f'response_trials_{args.num_trials}.npy', model_response)
+            np.save(f"prompts_trials_{args.num_trials}.npy', ")
 
     if args.task == 'relevance':
+        assert args.rating, "rating must be set for relevance task, try re-running with `--rating`"
+        ratings_array = eval_output['ratings']
         similarity = np.eye(len(models))
 
         print(similarity)
