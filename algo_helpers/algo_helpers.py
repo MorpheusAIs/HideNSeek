@@ -99,7 +99,7 @@ class ResponseEvaluationTensor:
         
         message_str = ""
         if past_prompts:
-            message_str = f"here are your past prompts: {past_prompts}"
+            message_str = f"keep going, and do not repeat the following: {past_prompts}"
 
         seed_prompts = [
             "Generate a new prompt about any topics that users are interested in",
@@ -230,7 +230,7 @@ class ResponseEvaluationTensor:
                 model_under_test = models[col_idx]
                 
                 for trial in range(config.num_trials):
-                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=prompts_array[row_idx, col_idx, :].tolist())
+                    p = self.generate_prompt(model_handle=auditing_model.model_handle, past_prompts=prompts_array[row_idx, col_idx, :trial].tolist())
                     if p is None:
                         logger.warning(f"Unable to generate prompt using model handle {auditing_model.name}")
                         ratings_array[row_idx, col_idx, trial] = np.nan
@@ -579,7 +579,7 @@ def parse_args():
     parser.add_argument('--rewrite_prompt', action='store_true', help="Prevent prompt rewrite")
     parser.add_argument('--save_response', action='store_true', help="Save LLM Response")
     parser.add_argument('--rating', action='store_true', help="run ratings for the models")
-    parser.add_argument('--vectorizer', choices = ['tf_idf', 'ngram'], default='tf_idf', help='Vectorization approach taken for language stat identification')    
+    parser.add_argument('--vectorizer', choices = ['tf_idf', 'ngram', 'emb'], default='tf_idf', help='Vectorization approach taken for language stat identification')    
     parser.add_argument('--lang_metric_approach', type=str, default='question_wise', help="Evaluation strategy for calculating language stats")
     parser.add_argument('--lang_metric_cosine', type=float, default=0.53)
     parser.add_argument('--output_path', type=str)

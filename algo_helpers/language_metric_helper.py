@@ -1,5 +1,6 @@
 import itertools
 import numpy as np
+from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict, Tuple
@@ -25,20 +26,23 @@ def generate_similarity_matrix(responses: List[str], approach: str = 'tf_idf',
     if vectorizer:
         transformed_matrix = vectorizer.transform(responses)
         similarity_matrix = cosine_similarity(transformed_matrix)
-        return similarity_matrix
     
     if approach == 'tf_idf':
         vectorizer = TfidfVectorizer()
         tfidf_matrix = vectorizer.fit_transform(responses)
         similarity_matrix = cosine_similarity(tfidf_matrix)
-        return similarity_matrix
     elif approach == 'ngram':
         vectorizer = CountVectorizer(ngram_range=(1, 3))
         ngram_matrix = vectorizer.fit_transform(responses)
         similarity_matrix = cosine_similarity(ngram_matrix)
-        return similarity_matrix
+    elif approach == 'emb':
+        embedder = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+        embedding_matrix = embedder.encode(responses)
+        similarity_matrix = cosine_similarity(embedding_matrix)
     else:
         raise ValueError(f"Unsupported approach: {approach}")
+    
+    return similarity_matrix
 
 def word_metric_global(models: Dict[str, List[str]], response_mapping: List[str], vectorization_approach: str = 'tf_idf', cosine_threshold: float = 0.25, debug: bool = False) -> Dict[Tuple[str, str], Dict[str, float]]:
     """
