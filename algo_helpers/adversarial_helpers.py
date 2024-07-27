@@ -107,7 +107,6 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
             print(f"Response - {response}")
             
             try:
-                bp()
                 evaluation_data = json.loads(response.split('```json')[1].split('```')[0].strip())
                 if "rationale" in evaluation_data and "model_indexes" in evaluation_data:
                     return evaluation_data
