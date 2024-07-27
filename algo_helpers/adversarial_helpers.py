@@ -168,7 +168,8 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
                 for col_idx in range(len(models)):
                     # Don't need to evaluate the auditor
-                    if col_idx == row_idx: continue
+                    if col_idx == row_idx: 
+                        continue
                     model_under_test = models[col_idx]
 
                     
