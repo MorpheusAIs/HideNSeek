@@ -90,25 +90,38 @@ def word_metric_question_wise(models: Dict[str, List[str]], model_names: List[st
     """
     num_models = len(model_names)
     num_questions = len(models[model_names[0]])
-    similarity_scores = np.zeros((num_models, num_models))
+    win_counts = np.zeros((num_models, num_models))
 
     for q in range(num_questions):
         question_responses = [models[model][q] for model in model_names]
         question_similarity_matrix = generate_similarity_matrix(question_responses, vectorization_approach)
-        similarity_scores += question_similarity_matrix
 
-    average_similarity_scores = similarity_scores / num_questions
+        # Identify the model with the highest similarity for each other model
+        for i in range(num_models):
+            # Get the similarities for the current model
+            similarities = question_similarity_matrix[i]
+            similarities[i] = -1
+            # Find the index of the model with the highest similarity
+            max_similarity_index = np.argmax(similarities)
+            
+            # Increment the win count for the model with the highest similarity
+            win_counts[i, max_similarity_index] += 1
+    
+    print(f"wwin counts - {win_counts}")
+    win_percentages = win_counts / num_questions
+    print(f"win_percentages - {win_percentages}")
+
     if cosine_threshold == None:
-        cosine_threshold = (~np.eye(average_similarity_scores.shape[0], dtype=bool) * average_similarity_scores).max()
+        cosine_threshold = (~np.eye(win_percentages.shape[0], dtype=bool) * win_percentages).max()
 
     similar_models = {}
     for i in range(num_models):
         for j in range(i + 1, num_models):
             if debug:
-                print(model_names[i], model_names[j], average_similarity_scores[i, j])
+                print(model_names[i], model_names[j], win_percentages[i, j])
             similar_models[(model_names[i], model_names[j])] = {
-                'is_similar': bool(average_similarity_scores[i, j] >= cosine_threshold),
-                'match_score': average_similarity_scores[i, j]
+                'is_similar': bool(win_percentages[i, j] >= cosine_threshold),
+                'match_score': win_percentages[i, j]
             }
 
     return similar_models
