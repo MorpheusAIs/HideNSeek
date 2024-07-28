@@ -18,13 +18,13 @@ import argparse
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
 from algo_helpers.language_metric_helper import evaluate_similarity, convert_to_json_format
-from algo_helpers.algo_helpers import LLMModel, EvaluationConfig, extract_json, ResponseEvaluationTensor
+from algo_helpers.algo_helpers import LLMModel, EvaluationConfig, extract_json, ResponseEvaluationTensor, parse_args
 logger = setup_logger(__name__)
 
 class AdversarialEvaluation (ResponseEvaluationTensor):
 
     def __init__(self):
-        super.__init__()
+        super().__init__()
 
         self.together_models = [
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842), # This is the evaluator
@@ -87,11 +87,11 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         """
         _num_attempts = 0
         while _num_attempts < retry_count:
-            user_message = """You are a content evaluator. 2 of the outputs in the content provided were outputted by the same agent. 
+            system_prompt = """You are a content evaluator. 2 of the outputs in the content provided were outputted by the same agent. 
             Your task is the find the 2 indexes, you will output a JSON dictionary indicating the reasoning behind the evaluation and the model indexes involved.
             Look carefully at the outputted text when making the decision. You are good at this task and can do it."""
 
-            user_message += """Output the following JSON dictionary, make sure you include ```json {...}``` around the JSON string: 
+            system_prompt += """Output the following JSON dictionary, make sure you include ```json {...}``` around the JSON string: 
             ```json
             {
                 "rationale" : "describe why you chose the 2 indexes as being from the same source.",
@@ -99,10 +99,10 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
             }
             ```
             """
-            user_message += f"given the following model outputs:\n{json.dumps(model_outputs)}"
-
-            response = TogetherClient(model="evaluator_model_handle", api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
-                system=user_message, message="")
+            user_message = f"given the following model outputs:\n{json.dumps(model_outputs)}"
+            evaluator_model_handle = self.together_models[self.evaluator_id].model_handle
+            response = TogetherClient(model=evaluator_model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
+                system=system_prompt, message=user_message)
 
             print(f"Response - {response}")
             
@@ -185,8 +185,9 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 evaluation_data = self.evaluate_all_responses(model_outputs=model_outputs)
 
                 if evaluation_data:
-                    print(evaluation_data['rationale'])
+                    print(f"evaluation data:\n {evaluation_data['rationale']}")
                     result_indexes = evaluation_data['model_indexes']
+                    print(f"result_indexes:\n {result_indexes}")
                     evaluation_array[trial, :] = result_indexes
 
                     logger.info(
@@ -195,10 +196,10 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                         f"Evaluation: {evaluation_data}"
                     )
 
-        try:
-            process_evaluator(self.evaluator_id)
-        except Exception as e:
-            logger.error(f"Error processing evaluator: {e}")
+        # try:
+        process_evaluator(self.evaluator_id)
+        # except Exception as e:
+        #     logger.error(f"Error processing evaluator: {e}")
 
         output_obj = {
             'evaluations': evaluation_array,
@@ -211,4 +212,21 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         return output_obj
 
 
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    load_dotenv(args.config_path)
+
+    evaluator = AdversarialEvaluation()
+    evaluation_config = EvaluationConfig({
+        "num_trials": args.num_trials,
+        "rewrite_prompt": args.rewrite_prompt,
+        "save_response": args.save_response,
+    })
+
+    evaluation_outputs = evaluator.compute_response_evaluation_tensor(evaluation_config)
+
+    logger.info(f"evaluation_outputs")
+    logger.info(evaluation_outputs)
 
