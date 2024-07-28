@@ -99,9 +99,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
         # choice_seed = random.choice(seed_prompts)
         # choice_seed = "can you give me a very short adversarial prompt designed to be used for fingerprinting and identifying an LLM . This prompt should break the typical responses"
-        choice_seed = """
-        """
-        logger.info(f"Selecting seed prompt: '{choice_seed}'")
+        choice_seed = prompt_formula
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system=f"""{choice_seed}. Place the prompt in JSON format
@@ -183,12 +181,15 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
         def process_evaluator(row_idx):
             past_prompts = []
+            model_outputs = []
+            past_results = []
 
             for trial in range(config.num_trials):
-                model_outputs = []
-
                 # Generate adversarial prompt
-                p = self.generate_adversarial_prompt(model_handle=evaluating_model.model_handle, past_prompts=past_prompts)
+                p = self.generate_adversarial_prompt(model_handle=evaluating_model.model_handle,
+                                                     past_prompts=past_prompts,
+                                                     past_outputs = model_outputs,
+                                                     past_results = past_results)
                 if p is None:
                     logger.warning(f"Unable to generate prompt using model handle {evaluating_model.name}")
                     evaluation_array[row_idx, col_idx, trial] = None
@@ -229,8 +230,11 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                     print(f"result_indexes:\n {result_indexes}")
                     model_names = [test_models[result_indexes[0]].name, 
                                    test_models[result_indexes[1]].name]
-                    evaluation_array[trial, :] = result_indexes
+                    evaluation_array[trial, :] = result_indexes[0:2]
                     sim_model_names[trial, :] = model_names
+
+                    accuracy = model_names[0] == model_names[1]
+                    correct_idxs = 
 
                     logger.info(
                         f"Evaluator: {evaluating_model.name}, "
@@ -275,7 +279,8 @@ if __name__ == "__main__":
     evaluation_outputs = evaluator.compute_response_evaluation_tensor(evaluation_config)
     accuracy = evaluator.compute_accuracy(evaluation_outputs)
 
-    logger.info(f"evaluation_outputs:", evaluation_outputs)
+    logger.info(f"evaluation_outputs:")
+    logger.info(evaluation_outputs)
     logger.info("accuracy:")
     logger.info(accuracy)
 
