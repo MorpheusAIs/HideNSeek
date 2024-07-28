@@ -252,7 +252,6 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
         return output_obj
     
-
     def compute_accuracy(self, evaluation_outputs: Dict[str, any]): 
         sim_models = evaluation_outputs["similar_models"]
         total_trials = sim_models.shape[0]
@@ -277,5 +276,6 @@ if __name__ == "__main__":
     accuracy = evaluator.compute_accuracy(evaluation_outputs)
 
     logger.info(f"evaluation_outputs:", evaluation_outputs)
-    logger.info("accuracy:", accuracy)
+    logger.info("accuracy:")
+    logger.info(accuracy)
 
