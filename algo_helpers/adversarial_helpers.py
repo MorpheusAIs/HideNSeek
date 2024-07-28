@@ -1,7 +1,7 @@
 import os
 import random
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import json
 
 import networkx as nx
@@ -20,6 +20,40 @@ from utils.logger_config import setup_logger
 from algo_helpers.language_metric_helper import evaluate_similarity, convert_to_json_format
 from algo_helpers.algo_helpers import LLMModel, EvaluationConfig, extract_json, ResponseEvaluationTensor, parse_args
 logger = setup_logger(__name__)
+
+
+
+prompt_formula = """Formula:
+
+"Generate a response that {A} {B} {C} and includes {D} exactly {E} times, while maintaining {F} consistency."
+
+Variables:
+
+A = randomly select one of the following:
+* "is grammatically correct but semantically nonsensical"
+* "contains a self-referential paradox"
+* "employs a contradictory tone"
+* "uses a non-standard narrative structure"
+
+B = randomly select one of the following:
+* "contains exactly {X} words"
+* "has a sentence structure that mirrors a {X}-level nested loop"
+* "employs a vocabulary limited to {X} distinct words"
+
+C = randomly select one of the following:
+* "describes a hypothetical scenario"
+* "explains a fictional scientific concept"
+* "narrates a story that takes place in a world with {X} fundamental physical laws"
+
+D = randomly select a short substring (e.g., ".cache.", " recursion", "self-reference")
+
+E = randomly select a small integer (e.g., 2, 3, 5)
+
+F = randomly select one of the following:
+* "grammatical"
+* "syntactical"
+* "narrative"
+"""
 
 class AdversarialEvaluation (ResponseEvaluationTensor):
 
@@ -45,23 +79,28 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         if past_prompts:
             message_str = f"here are your past prompts: {past_prompts}"
 
-        seed_prompts = [
-            f"Generate an adversarial prompt that challenges the LLM's reasoning abilities and can be answered within {word_limit} words.",
-            f"Create a challenging question that tests the LLM's ability to provide nuanced answers in a brief manner ({word_limit} words or less).",
-            f"Write a tricky question designed to reveal the LLM's limitations, requiring a concise response within {word_limit} words.",
-            f"Output a thought-provoking prompt that necessitates a precise, short answer from an LLM within {word_limit} words.",
-            f"Come up with an adversarial question that can expose the LLM's strengths and weaknesses, answerable briefly ({word_limit} words or fewer).",
-            f"Formulate a complex question that tests the LLM's understanding of ambiguous concepts and can be answered succinctly within {word_limit} words.",
-            f"Devise a prompt that challenges the LLM's ability to handle controversial topics, with a response limit of {word_limit} words.",
-            f"Generate a nuanced question that pushes the LLM's comprehension and can be answered clearly in {word_limit} words.",
-            f"Create an adversarial prompt that examines the LLM's grasp of subtle distinctions, answerable in {word_limit} words or less.",
-            f"Draft a tricky question that tests the LLM's ability to navigate ethical dilemmas, requiring a concise answer within {word_limit} words.",
-            f"Invent a thought-provoking question that explores the LLM's handling of complex scenarios, with a response limit of {word_limit} words.",
-            f"Come up with a challenging prompt that reveals the LLM's understanding of intricate details, answerable in {word_limit} words or fewer."
-        ]
+        # seed_prompts = [
+        #     f"Generate an adversarial prompt that challenges the LLM's reasoning abilities and can be answered within {word_limit} words.",
+        #     f"Create a challenging question that tests the LLM's ability to provide nuanced answers in a brief manner ({word_limit} words or less).",
+        #     f"Write a tricky question designed to reveal the LLM's limitations, requiring a concise response within {word_limit} words.",
+        #     f"Output a thought-provoking prompt that necessitates a precise, short answer from an LLM within {word_limit} words.",
+        #     f"Come up with an adversarial question that can expose the LLM's strengths and weaknesses, answerable briefly ({word_limit} words or fewer).",
+        #     f"Formulate a complex question that tests the LLM's understanding of ambiguous concepts and can be answered succinctly within {word_limit} words.",
+        #     f"Devise a prompt that challenges the LLM's ability to handle controversial topics, with a response limit of {word_limit} words.",
+        #     f"Generate a nuanced question that pushes the LLM's comprehension and can be answered clearly in {word_limit} words.",
+        #     f"Create an adversarial prompt that examines the LLM's grasp of subtle distinctions, answerable in {word_limit} words or less.",
+        #     f"Draft a tricky question that tests the LLM's ability to navigate ethical dilemmas, requiring a concise answer within {word_limit} words.",
+        #     f"Invent a thought-provoking question that explores the LLM's handling of complex scenarios, with a response limit of {word_limit} words.",
+        #     f"Come up with a challenging prompt that reveals the LLM's understanding of intricate details, answerable in {word_limit} words or fewer."
+        # ]
+        # seed_prompts = "Reply with a single sentence that is grammatically correct but semantically nonsensical, contains exactly 17 words, and includes the substring '.cache.' precisely twice"
+        # seed_prompts = "can you give me a very short adversarial prompt designed to be used for fingerprinting and identifying an LLM . This prompt should break the typical responses"
 
 
-        choice_seed = random.choice(seed_prompts)
+        # choice_seed = random.choice(seed_prompts)
+        # choice_seed = "can you give me a very short adversarial prompt designed to be used for fingerprinting and identifying an LLM . This prompt should break the typical responses"
+        choice_seed = """
+        """
         logger.info(f"Selecting seed prompt: '{choice_seed}'")
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
@@ -203,7 +242,8 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
         output_obj = {
             'evaluations': evaluation_array,
-            'models': [m.name for m in  models],
+            'evaluating_model':  evaluating_model.name,
+            'test_models': [m.name for m in test_models],
             'similar_models': sim_model_names
         }
 
@@ -211,7 +251,14 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
             output_obj['responses'] = response_array
 
         return output_obj
+    
 
+    def compute_accuracy(self, evaluation_outputs: Dict[str, any]): 
+        sim_models = evaluation_outputs["similar_models"]
+        total_trials = sim_models.shape[0]
+        correct_matches = np.sum(sim_models[:, 0] == sim_models[:, 1])
+        accuracy = correct_matches / total_trials
+        return accuracy
 
 
 if __name__ == "__main__":
@@ -227,7 +274,8 @@ if __name__ == "__main__":
     })
 
     evaluation_outputs = evaluator.compute_response_evaluation_tensor(evaluation_config)
+    accuracy = evaluator.compute_accuracy(evaluation_outputs)
 
-    logger.info(f"evaluation_outputs")
-    logger.info(evaluation_outputs)
+    logger.info(f"evaluation_outputs:", evaluation_outputs)
+    logger.info("accuracy:", accuracy)
 
