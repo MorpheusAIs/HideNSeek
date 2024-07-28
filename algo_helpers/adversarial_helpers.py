@@ -62,6 +62,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
 
         choice_seed = random.choice(seed_prompts)
+        logger.info(f"Selecting seed prompt: '{choice_seed}'")
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
             system=f"""{choice_seed}. Place the prompt in JSON format
@@ -133,14 +134,15 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 else:
                     models.append(model)
                 used_names.add(model.name)
-
+        evaluating_model = models[self.evaluator_id]
+        test_models = [m for idx, m in enumerate(models) if idx != self.evaluator_id]
         evaluation_array = np.empty((config.num_trials, 2), dtype=int)
+        sim_model_names = np.empty((config.num_trials, 2), dtype=object)
 
         if config.save_response:
-            response_array = np.empty((len(models), config.num_trials), dtype=object)
+            response_array = np.empty((len(test_models), config.num_trials), dtype=object)
 
         def process_evaluator(row_idx):
-            evaluating_model = models[row_idx]
             past_prompts = []
 
             for trial in range(config.num_trials):
@@ -165,12 +167,10 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 else:
                     p_optim = p
 
-                for col_idx in range(len(models)):
+                for col_idx in range(len(test_models)):
                     # Don't need to evaluate the auditor
-                    if col_idx == row_idx: 
-                        continue
-                    model_under_test = models[col_idx]
-
+                    model_under_test = test_models[col_idx]
+                    logger.info(f"Model under test: {model_under_test.name}")
                     
                     response = TogetherClient(
                         api_key=os.environ["TOGETHER_API_KEY"], model=model_under_test.model_handle).get_completion(
@@ -188,7 +188,10 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                     print(f"evaluation data:\n {evaluation_data['rationale']}")
                     result_indexes = evaluation_data['model_indexes']
                     print(f"result_indexes:\n {result_indexes}")
+                    model_names = [test_models[result_indexes[0]].name, 
+                                   test_models[result_indexes[1]].name]
                     evaluation_array[trial, :] = result_indexes
+                    sim_model_names[trial, :] = model_names
 
                     logger.info(
                         f"Evaluator: {evaluating_model.name}, "
@@ -196,14 +199,12 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                         f"Evaluation: {evaluation_data}"
                     )
 
-        # try:
         process_evaluator(self.evaluator_id)
-        # except Exception as e:
-        #     logger.error(f"Error processing evaluator: {e}")
 
         output_obj = {
             'evaluations': evaluation_array,
-            'models': models,
+            'models': [m.name for m in  models],
+            'similar_models': sim_model_names
         }
 
         if config.save_response:
