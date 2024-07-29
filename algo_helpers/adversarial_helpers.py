@@ -104,7 +104,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         {
             "thought" : "the thought you have about the task and what you plan to do.", 
              "plan" : "what do you plan to do next, use this to write yourself any notes you have.",
-             "prompt": "The question that you have for all the models you currently are testing out, have them answer questions and Nothing Else."
+             "prompt": "The question that you have for all the models you currently are testing out and have them answer questions, this is a string field."
         }
         ```
         """
@@ -198,7 +198,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                                                      past_results = past_results)
                 if p is None:
                     logger.warning(f"Unable to generate prompt using model handle {evaluating_model.name}")
-                    evaluation_array[row_idx, col_idx, trial] = None
+                    evaluation_array[trial, :] = None
                     continue
                 past_prompts.append(p)
                 logger.info(f"Evaluator {evaluating_model.name} generated prompt: {p}")
@@ -207,7 +207,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                     p_optim = self.optimize_prompt(evaluating_model.model_handle, p)
                     if p_optim is None:
                         logger.warning(f"Unable to optimize prompt using model handle {evaluating_model.name}")
-                        evaluation_array[row_idx, col_idx, trial] = None
+                        evaluation_array[trial, :] = None
                         continue
                     logger.info(f"Optimized prompt: {p_optim}")
                 else:
