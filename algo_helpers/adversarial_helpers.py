@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 import random
 import re
@@ -70,52 +71,56 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
         self.evaluator_id = 0
 
-    def generate_adversarial_prompt(self, model_handle: str, past_prompts: List =[], _num_attempts:int = 0, word_limit: int = 100):
+    def generate_adversarial_prompt(self, model_handle: str, past_prompts: List =[], _num_attempts:int = 0, 
+                                    word_limit: int = 100, past_outputs=None, past_results = None):
 
         if _num_attempts > 4:
             return None
         
+        logger.info(f"number of attempts {_num_attempts}")
+        
         message_str = ""
-        if past_prompts:
-            message_str = f"here are your past prompts: {past_prompts}"
+        choice_seed = prompt_formula
+        system_prompt = "You are an AI system capable of fingerprinting LLMS. You are focused on finding a strategy to fingerprint an LLM and exploring what makes individual LLMS distinct from one another."
 
-        # seed_prompts = [
-        #     f"Generate an adversarial prompt that challenges the LLM's reasoning abilities and can be answered within {word_limit} words.",
-        #     f"Create a challenging question that tests the LLM's ability to provide nuanced answers in a brief manner ({word_limit} words or less).",
-        #     f"Write a tricky question designed to reveal the LLM's limitations, requiring a concise response within {word_limit} words.",
-        #     f"Output a thought-provoking prompt that necessitates a precise, short answer from an LLM within {word_limit} words.",
-        #     f"Come up with an adversarial question that can expose the LLM's strengths and weaknesses, answerable briefly ({word_limit} words or fewer).",
-        #     f"Formulate a complex question that tests the LLM's understanding of ambiguous concepts and can be answered succinctly within {word_limit} words.",
-        #     f"Devise a prompt that challenges the LLM's ability to handle controversial topics, with a response limit of {word_limit} words.",
-        #     f"Generate a nuanced question that pushes the LLM's comprehension and can be answered clearly in {word_limit} words.",
-        #     f"Create an adversarial prompt that examines the LLM's grasp of subtle distinctions, answerable in {word_limit} words or less.",
-        #     f"Draft a tricky question that tests the LLM's ability to navigate ethical dilemmas, requiring a concise answer within {word_limit} words.",
-        #     f"Invent a thought-provoking question that explores the LLM's handling of complex scenarios, with a response limit of {word_limit} words.",
-        #     f"Come up with a challenging prompt that reveals the LLM's understanding of intricate details, answerable in {word_limit} words or fewer."
-        # ]
-        # seed_prompts = "Reply with a single sentence that is grammatically correct but semantically nonsensical, contains exactly 17 words, and includes the substring '.cache.' precisely twice"
-        # seed_prompts = "can you give me a very short adversarial prompt designed to be used for fingerprinting and identifying an LLM . This prompt should break the typical responses"
+        if past_outputs:
+            system_prompt += f"""Reflect on your attempts at fingerprinting and LLM, how thats been going, and can you improve upon the process. 
+            here are all of your past promtps:
+            {past_prompts}
 
+            here are the past outputs:
+            {past_outputs}
 
-        # choice_seed = random.choice(seed_prompts)
-        # choice_seed = "can you give me a very short adversarial prompt designed to be used for fingerprinting and identifying an LLM . This prompt should break the typical responses"
-        choice_seed = """
+            here are the past results that you've encountered given your ongoing efforts:
+            {past_results}
+            """
+        else:
+            system_prompt += f"""
+            {choice_seed}.
+            """
+        system_prompt +="""
+        Place the prompt in JSON format:
+        ```json
+        {
+            "thought" : "the thought you have about the task and what you plan to do.", 
+             "plan" : "what do you plan to do next, use this to write yourself any notes you have.",
+             "prompt": "The question that you have for all the models you currently are testing out, have them answer questions and Nothing Else."
+        }
+        ```
         """
-        logger.info(f"Selecting seed prompt: '{choice_seed}'")
 
         response = TogetherClient(model=model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
-            system=f"""{choice_seed}. Place the prompt in JSON format
-            ```json{{"prompt": "_____"}}```
-            """,
+            system=system_prompt,
             message=message_str
         )
-
+        logger.info(f"auditor prompt generation response: {response}")
         prompt = self._extract_prompt(response)
 
         if prompt:
             return prompt
         else:
-            return self.generate_adversarial_prompt(model_handle, past_prompts=past_prompts, _num_attempts=_num_attempts+1)
+            return self.generate_adversarial_prompt(model_handle, past_prompts=past_prompts, _num_attempts=_num_attempts+1, 
+                                                    word_limit=word_limit, past_outputs=past_outputs, past_results=past_results)
 
     def evaluate_all_responses(self, model_outputs: dict, retry_count=5):
         """
@@ -143,8 +148,6 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
             evaluator_model_handle = self.together_models[self.evaluator_id].model_handle
             response = TogetherClient(model=evaluator_model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
                 system=system_prompt, message=user_message)
-
-            print(f"Response - {response}")
             
             try:
                 evaluation_data = json.loads(response.split('```json')[1].split('```')[0].strip())
@@ -183,12 +186,16 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
         def process_evaluator(row_idx):
             past_prompts = []
+            total_outputs = defaultdict(list)
+            past_results = []
 
             for trial in range(config.num_trials):
                 model_outputs = []
-
                 # Generate adversarial prompt
-                p = self.generate_adversarial_prompt(model_handle=evaluating_model.model_handle, past_prompts=past_prompts)
+                p = self.generate_adversarial_prompt(model_handle = evaluating_model.model_handle,
+                                                     past_prompts = past_prompts,
+                                                     past_outputs = total_outputs,
+                                                     past_results = past_results)
                 if p is None:
                     logger.warning(f"Unable to generate prompt using model handle {evaluating_model.name}")
                     evaluation_array[row_idx, col_idx, trial] = None
@@ -224,19 +231,29 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 evaluation_data = self.evaluate_all_responses(model_outputs=model_outputs)
 
                 if evaluation_data:
-                    print(f"evaluation data:\n {evaluation_data['rationale']}")
                     result_indexes = evaluation_data['model_indexes']
-                    print(f"result_indexes:\n {result_indexes}")
                     model_names = [test_models[result_indexes[0]].name, 
                                    test_models[result_indexes[1]].name]
-                    evaluation_array[trial, :] = result_indexes
+                    evaluation_array[trial, :] = result_indexes[0:2]
                     sim_model_names[trial, :] = model_names
+
+                    correct = model_names[0] == model_names[1]
+                    correct_idxs = self._find_matching_indexes([m.model_handle for m in test_models])
+                    trial_result_obj = {
+                        "correct": correct,
+                        "selected_ids": result_indexes[0:2],
+                        "correct_ids": correct_idxs
+                    }
+                    past_results.append(trial_result_obj)
 
                     logger.info(
                         f"Evaluator: {evaluating_model.name}, "
                         f"Trial: {trial}, "
                         f"Evaluation: {evaluation_data}"
                     )
+
+                    for idx, response in enumerate(model_outputs):
+                        total_outputs[idx].append(response)
 
         process_evaluator(self.evaluator_id)
 
@@ -258,6 +275,25 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         correct_matches = np.sum(sim_models[:, 0] == sim_models[:, 1])
         accuracy = correct_matches / total_trials
         return accuracy
+    
+    def _find_matching_indexes(self, strings):
+        """
+        Finds the indexes of two matching strings in a list.
+
+        Args:
+            strings (list[str]): The list of strings to search.
+
+        Returns:
+            tuple[int, int] or None: The indexes of two matching strings, or None if no match is found.
+        """
+        string_counts = {}
+        for i, s in enumerate(strings):
+            if s in string_counts:
+                return (string_counts[s], i)
+            string_counts[s] = i
+        return None
+    
+
 
 
 if __name__ == "__main__":
@@ -275,7 +311,8 @@ if __name__ == "__main__":
     evaluation_outputs = evaluator.compute_response_evaluation_tensor(evaluation_config)
     accuracy = evaluator.compute_accuracy(evaluation_outputs)
 
-    logger.info(f"evaluation_outputs:", evaluation_outputs)
+    logger.info(f"evaluation_outputs:")
+    logger.info(evaluation_outputs)
     logger.info("accuracy:")
     logger.info(accuracy)
 
