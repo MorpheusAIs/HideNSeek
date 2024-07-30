@@ -7,32 +7,27 @@ HideNSeek is a Model Fidelity Verification Algorithm for Probabilistically Finge
 
 Sample Usage
 
-To run the relevance computation task
+Setup a YAML file that looks something like this: 
 ```
-python algo_helpers.py --config_path <config_path_with_together_ai_key> --num_trials 3 --task relevance  --output_path model_image_groups.png
-```
+auditor_model: Qwen/Qwen2-72B-Instruct
+test_models:
+  - meta-llama/Llama-3-70b-chat-hf
+  - meta-llama/Llama-3-8b-chat-hf
+  - google/gemma-2-27b-it
+  - mistralai/Mistral-7B-Instruct-v0.3
+  - microsoft/phi-2
+test_indexes:
+  - 0
+  - 1
+  ```
 
-To run language metrics task with ngram vectorizer
+To run the adverserial LLM test run the following command
 ```
-python algo_helpers.py --config_path <config_path_with_together_ai_key> --save_response --num_trials 3 --task lang_trend --lang_metric_cosine 0.55 --vectorizer ngram --output_path metrics_question_wise_trials_3_run_2.json
+python -m algo_helpers.adversarial_helpers --save_response --num_trials 10 --models_file models.yaml
 ```
 
 ### Algorithm
 
-The algorithm consists of the following steps:
-
-1. **Data Extraction**:
-    - Extract the scores given by the reference model (ref_idx) and the test model (test_idx) across all trials.
-    - Extract the scores received by the reference model and the test model from all other models across all trials.
-2. **Statistical Analysis**:
-    - Compute the means and standard deviations of the extracted scores.
-    - Perform two-sample t-tests to evaluate the null hypothesis that the means of the scores are equal.
-    - Perform Mann-Whitney U tests as a non-parametric alternative to the t-tests.
-    - Calculate confidence intervals for the means of the scores.
-    - Compute Cohen's d to measure the effect size.
-3. **Decision Rule**:
-    - If the standard deviations of all scores are zero, directly compare the scores for equality.
-    - Use the p-values from the t-tests to determine if the models are statistically similar. If both p-values are above the significance level (α = 0.05), the null hypothesis is not rejected, indicating similarity.
-    - The algorithm flags the models as similar if the null hypothesis is not rejected for both given and received scores.
+An LLM Is used to evaluate if various LLMS are similar or not
 
 A Matrix can than be generated thats `M X M` that contains `1`'s where the models where confused for one another. A grouping algorithm can than visualize the groups and showcase what models are confused for which
