@@ -16,6 +16,11 @@ from scipy.stats import ttest_ind, ttest_ind, mannwhitneyu, t, sem
 from dotenv import load_dotenv
 import argparse
 
+import sys
+current_path = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.abspath(os.path.join(current_path, os.pardir))
+sys.path.insert(0, parent_dir)
+
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
 from algo_helpers.language_metric_helper import evaluate_similarity, convert_to_json_format
@@ -64,9 +69,11 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         self.together_models = [
             LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842), # This is the evaluator
             LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
-            LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
-            LLMModel(model_handle="meta-llama/Llama-3-8b-chat-hf", MMLU_score=0.684),
-            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.6)            
+            LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
+            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.6),
+            LLMModel(model_handle='google/gemma-2-9b-it', MMLU_score=0.5),
+            LLMModel(model_handle='allenai/OLMo-7B-Instruct', MMLU_score=0.5),
+            LLMModel(model_handle="NousResearch/Nous-Capybara-7B-V1p9", MMLU_score=0.5)
         ]
         self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
         self.evaluator_id = 0
@@ -249,7 +256,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
                     logger.info(
                         f"Evaluator: {evaluating_model.name}, "
-                        f"Trial: {trial} ",
+                        f"Trial: {trial}",
                         f"Trial Result: {trial_result_obj}"
                     )
 
@@ -270,11 +277,18 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
         return output_obj
     
-    def compute_accuracy(self, evaluation_outputs: Dict[str, any]): 
+    def compute_accuracy(self, evaluation_outputs: Dict[str, any], warmup_steps: int): 
+
         sim_models = evaluation_outputs["similar_models"]
         total_trials = sim_models.shape[0]
-        correct_matches = np.sum(sim_models[:, 0] == sim_models[:, 1])
-        accuracy = correct_matches / total_trials
+
+        # Discount warmup steps
+        effective_trials = total_trials - warmup_steps
+        if effective_trials <= 0:
+            raise ValueError("Warmup steps exceed or equal the total number of trials.")
+    
+        correct_matches = np.sum(sim_models[warmup_steps:, 0] == sim_models[warmup_steps:, 1])
+        accuracy = correct_matches / effective_trials
         return accuracy
     
     def _find_matching_indexes(self, strings):
@@ -293,9 +307,33 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 return (string_counts[s], i)
             string_counts[s] = i
         return None
-    
 
+def convert_ndarray_to_list(data):
+    if isinstance(data, dict):
+        return {key: convert_ndarray_to_list(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [convert_ndarray_to_list(item) for item in data]
+    elif isinstance(data, np.ndarray):
+        return data.tolist()
+    else:
+        return data    
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    # General
+    parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
+    parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
+
+    # Task arguments
+    parser.add_argument('--rewrite_prompt', action='store_true', help="Prevent prompt rewrite")
+    parser.add_argument('--save_response', action='store_true', help="Save LLM Response")
+    parser.add_argument('--output_path', type=str)
+    parser.add_argument('--num_workers', type=int, default=5, help="Number of concurrent experiments to run")
+    parser.add_argument('--warmup_steps', type=int, default=3, help="number of warmup steps")
+
+    args = parser.parse_args()
+    return args
 
 if __name__ == "__main__":
     args = parse_args()
@@ -307,13 +345,30 @@ if __name__ == "__main__":
         "num_trials": args.num_trials,
         "rewrite_prompt": args.rewrite_prompt,
         "save_response": args.save_response,
+        "warmup_steps": args.warmup_steps
     })
 
     evaluation_outputs = evaluator.compute_response_evaluation_tensor(evaluation_config)
-    accuracy = evaluator.compute_accuracy(evaluation_outputs)
+    accuracy = evaluator.compute_accuracy(evaluation_outputs, warmup_steps=evaluation_config.additional_attributes['warmup_steps'])
 
     logger.info(f"evaluation_outputs:")
     logger.info(evaluation_outputs)
     logger.info("accuracy:")
     logger.info(accuracy)
+    
+    metrics = {
+        'test_models': [m.model_handle for idx, m in enumerate(evaluator.together_models) \
+                         if idx != evaluator.evaluator_id],
+        'evaluator_model': evaluator.together_models[evaluator.evaluator_id].model_handle,
+        'accuracy': accuracy
+    }
+    
+    if args.output_path:
+        os.makedirs(args.output_path, exist_ok=True)
 
+        eval_output_path = os.path.join(args.output_path, 'eval_output.json')
+        json.dump(convert_ndarray_to_list(evaluation_outputs), open(eval_output_path, 'w'))
+
+        metric_output_path = os.path.join(args.output_path, 'metrics.json')
+        json.dump(metrics, open(metric_output_path, 'w'))
+        
