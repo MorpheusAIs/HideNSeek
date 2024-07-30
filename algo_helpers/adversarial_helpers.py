@@ -161,7 +161,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         logger.warning("In evaluate_all_responses, returning None after retries")
         return None
     
-    def compute_response_evaluation_tensor(self, config: EvaluationConfig, model_indices=None):
+    def compute_response_evaluation_tensor(self, config: EvaluationConfig, model_indices=None, max_past_outputs=4):
         if model_indices is None:
             models = self.together_models
         else:
@@ -192,10 +192,11 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
             for trial in range(config.num_trials):
                 model_outputs = []
                 # Generate adversarial prompt
+                last_n_total_outputs = defaultdict(list, {model_id: outputs[-max_past_outputs:] for model_id, outputs in total_outputs.items()})
                 p = self.generate_adversarial_prompt(model_handle = evaluating_model.model_handle,
-                                                     past_prompts = past_prompts,
-                                                     past_outputs = total_outputs,
-                                                     past_results = past_results)
+                                                     past_prompts = past_prompts[-max_past_outputs:],
+                                                     past_outputs = last_n_total_outputs,
+                                                     past_results = past_results[-max_past_outputs:])
                 if p is None:
                     logger.warning(f"Unable to generate prompt using model handle {evaluating_model.name}")
                     evaluation_array[trial, :] = None
