@@ -303,6 +303,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # General
+    parser.add_argument("--models_file", type=str, required=True, help="Yaml file that contains info on the models")
     parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
     parser.add_argument('--config_path', type=str, required=False, help="Path for loading model api config")
 
@@ -339,9 +340,8 @@ if __name__ == "__main__":
     logger.info(accuracy)
     
     metrics = {
-        'test_models': [m.model_handle for idx, m in enumerate(evaluator.together_models) \
-                         if idx != evaluator.evaluator_id],
-        'evaluator_model': evaluator.together_models[evaluator.evaluator_id].model_handle,
+        'test_models': [m.model_handle for m in evaluator.test_models],
+        'evaluator_model': evaluator.auditor_model.model_handle,
         'accuracy': accuracy
     }
     
