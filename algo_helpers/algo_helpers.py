@@ -41,7 +41,7 @@ def extract_json(text):  # FIXME, duplicate from llm/llm_provider_ranking_experi
     return None
 
 class LLMModel:
-    def __init__(self, model_handle, MMLU_score, name=None):
+    def __init__(self, model_handle, MMLU_score=None, name=None):
         self.model_handle = model_handle
         self.MMLU_score = MMLU_score
         self.name = name or f"{self.model_handle}"

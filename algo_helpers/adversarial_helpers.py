@@ -164,21 +164,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         logger.warning("In evaluate_all_responses, returning None after retries")
         return None
     
-    def compute_response_evaluation_tensor(self, config: EvaluationConfig, model_indices=None, max_past_outputs=4):
-        if model_indices is None:
-            models = self.test_models
-        else:
-            models = []
-            used_names = set()
-            for idx in model_indices:
-                model = self.together_models[idx]
-                if model.name in used_names:
-                    new_name = f"{model.name}_clone_{len([m for m in models if m.model_handle == model.model_handle])}"
-                    new_model = LLMModel(model.model_handle, model.MMLU_score, new_name)
-                    models.append(new_model)
-                else:
-                    models.append(model)
-                used_names.add(model.name)
+    def compute_response_evaluation_tensor(self, config: EvaluationConfig, max_past_outputs=4):
         test_models = [m.name for  m in self.test_models]
         evaluation_array = np.empty((config.num_trials, 2), dtype=int)
         sim_model_names = np.empty((config.num_trials, 2), dtype=object)
@@ -186,7 +172,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         if config.save_response:
             response_array = np.empty((len(test_models), config.num_trials), dtype=object)
 
-        def process_evaluator(row_idx):
+        def process_evaluator():
             past_prompts = []
             total_outputs = defaultdict(list)
             past_results = []
@@ -258,7 +244,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                     for idx, response in enumerate(model_outputs):
                         total_outputs[idx].append(response)
 
-        process_evaluator(self.evaluator_id)
+        process_evaluator()
 
         output_obj = {
             'evaluations': evaluation_array,
@@ -334,7 +320,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     load_dotenv(args.config_path)
-    model_yaml_file = args["models_file"]
+    model_yaml_file = args.models_file
 
     evaluator = AdversarialEvaluation(model_yaml_file)
     evaluation_config = EvaluationConfig({
