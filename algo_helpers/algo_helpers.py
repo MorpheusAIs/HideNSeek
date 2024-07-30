@@ -41,7 +41,7 @@ def extract_json(text):  # FIXME, duplicate from llm/llm_provider_ranking_experi
     return None
 
 class LLMModel:
-    def __init__(self, model_handle, MMLU_score, name=None):
+    def __init__(self, model_handle, MMLU_score=None, name=None):
         self.model_handle = model_handle
         self.MMLU_score = MMLU_score
         self.name = name or f"{self.model_handle}"
@@ -509,6 +509,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # General
+    parser.add_argument("--models_file", type=str, required=True, help="YAML file that contains the configs for the models to be used")
     parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
     parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend', 'model_duplication'], 
                 default='relevance', help='Which task to run')
