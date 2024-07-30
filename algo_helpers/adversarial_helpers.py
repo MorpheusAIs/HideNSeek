@@ -165,12 +165,11 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         return None
     
     def compute_response_evaluation_tensor(self, config: EvaluationConfig, max_past_outputs=4):
-        test_models = [m.name for  m in self.test_models]
         evaluation_array = np.empty((config.num_trials, 2), dtype=int)
         sim_model_names = np.empty((config.num_trials, 2), dtype=object)
 
         if config.save_response:
-            response_array = np.empty((len(test_models), config.num_trials), dtype=object)
+            response_array = np.empty((len(self.test_models), config.num_trials), dtype=object)
 
         def process_evaluator():
             past_prompts = []
@@ -195,16 +194,16 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 if config.rewrite_prompt:
                     p_optim = self.optimize_prompt(self.auditor_model.model_handle, p)
                     if p_optim is None:
-                        logger.warning(f"Unable to optimize prompt using model handle {evaluating_model.name}")
+                        logger.warning(f"Unable to optimize prompt using model handle {self.auditor_model.name}")
                         evaluation_array[trial, :] = None
                         continue
                     logger.info(f"Optimized prompt: {p_optim}")
                 else:
                     p_optim = p
 
-                for col_idx in range(len(test_models)):
+                for col_idx in range(len(self.test_models)):
                     # Don't need to evaluate the auditor
-                    model_under_test = test_models[col_idx]
+                    model_under_test = self.test_models[col_idx]
                     logger.info(f"Model under test: {model_under_test.name}")
                     
                     response = TogetherClient(
@@ -221,12 +220,12 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
                 if evaluation_data:
                     result_indexes = evaluation_data['model_indexes']
-                    model_names = [self.test_models[self.test_indexes[0]].name,
-                                   self.test_models[self.test_indexes[1]].name]
                     evaluation_array[trial, :] = result_indexes[0:2]
+                    model_names = [self.test_models[result_indexes[0]].name, 
+                                   self.test_models[result_indexes[1]].name]
                     sim_model_names[trial, :] = model_names
-
-                    correct = model_names[0] == model_names[1]
+                    
+                    correct = (result_indexes[0] ==  self.test_indexes[0])  & (result_indexes[1] ==  self.test_indexes[1])
                     correct_idxs = self.test_indexes
                     trial_result_obj = {
                         "correct": correct,
