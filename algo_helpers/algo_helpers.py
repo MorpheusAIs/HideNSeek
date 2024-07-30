@@ -509,6 +509,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # General
+    parser.add_argument("--models_file", type=str, required=True, help="YAML file that contains the configs for the models to be used")
     parser.add_argument('--num_trials', type=int, required=False, default=5, help="Number of trials to run")
     parser.add_argument('--task', type=str, choices=['relevance', 'lang_trend', 'model_duplication'], 
                 default='relevance', help='Which task to run')

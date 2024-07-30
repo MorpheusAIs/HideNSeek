@@ -4,6 +4,7 @@ import random
 import re
 from typing import List, Tuple, Dict
 import json
+import yaml
 
 import networkx as nx
 import numpy as np
@@ -57,22 +58,21 @@ F = randomly select one of the following:
 * "narrative"
 """
 
+
+def load_config(file_path='config.yaml'):
+    with open(file_path, 'r') as file:
+        return yaml.safe_load(file)   
+
+
 class AdversarialEvaluation (ResponseEvaluationTensor):
 
-    def __init__(self):
+    def __init__(self, models_config: str):
         super().__init__()
-
-        self.together_models = [
-            LLMModel(model_handle="Qwen/Qwen2-72B-Instruct", MMLU_score=0.842), # This is the evaluator
-            LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
-            LLMModel(model_handle="meta-llama/Llama-3-70b-chat-hf", MMLU_score=0.795),
-            LLMModel(model_handle='mistralai/Mistral-7B-Instruct-v0.3', MMLU_score=0.6),
-            LLMModel(model_handle='google/gemma-2-9b-it', MMLU_score=0.5),
-            LLMModel(model_handle='allenai/OLMo-7B-Instruct', MMLU_score=0.5),
-            LLMModel(model_handle="NousResearch/Nous-Capybara-7B-V1p9", MMLU_score=0.5)
-        ]
-        self.together_models.sort(key=lambda x: x.MMLU_score, reverse=True)  # sort these by MMLU score
-        self.evaluator_id = 0
+        
+        config = load_config(models_config)
+        self.auditor_model = LLMModel(config["auditor_model"]) 
+        self.test_models = [LLMModel(model_handle=model) for model in config["test_models"]]
+        self.test_indexes = config["test_indexes"]
 
     def generate_adversarial_prompt(self, model_handle: str, past_prompts: List =[], _num_attempts:int = 0, 
                                     word_limit: int = 100, past_outputs=None, past_results = None):
@@ -148,7 +148,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
             ```
             """
             user_message = f"given the following model outputs:\n{json.dumps(model_outputs)}"
-            evaluator_model_handle = self.together_models[self.evaluator_id].model_handle
+            evaluator_model_handle = self.auditor_model.model_handle
             response = TogetherClient(model=evaluator_model_handle, api_key=os.environ["TOGETHER_API_KEY"]).get_completion(
                 system=system_prompt, message=user_message)
             
@@ -166,7 +166,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
     
     def compute_response_evaluation_tensor(self, config: EvaluationConfig, model_indices=None, max_past_outputs=4):
         if model_indices is None:
-            models = self.together_models
+            models = self.
         else:
             models = []
             used_names = set()
@@ -179,8 +179,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 else:
                     models.append(model)
                 used_names.add(model.name)
-        evaluating_model = models[self.evaluator_id]
-        test_models = [m for idx, m in enumerate(models) if idx != self.evaluator_id]
+        test_models = [m.name for  m in self.test_models]
         evaluation_array = np.empty((config.num_trials, 2), dtype=int)
         sim_model_names = np.empty((config.num_trials, 2), dtype=object)
 
@@ -196,19 +195,19 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                 model_outputs = []
                 # Generate adversarial prompt
                 last_n_total_outputs = defaultdict(list, {model_id: outputs[-max_past_outputs:] for model_id, outputs in total_outputs.items()})
-                p = self.generate_adversarial_prompt(model_handle = evaluating_model.model_handle,
+                p = self.generate_adversarial_prompt(model_handle = self.auditor_model.model_handle,
                                                      past_prompts = past_prompts[-max_past_outputs:],
                                                      past_outputs = last_n_total_outputs,
                                                      past_results = past_results[-max_past_outputs:])
                 if p is None:
-                    logger.warning(f"Unable to generate prompt using model handle {evaluating_model.name}")
+                    logger.warning(f"Unable to generate prompt using model handle {self.auditor_model.name}")
                     evaluation_array[trial, :] = None
                     continue
                 past_prompts.append(p)
-                logger.info(f"Evaluator {evaluating_model.name} generated prompt: {p}")
+                logger.info(f"Evaluator {self.auditor_model.name} generated prompt: {p}")
 
                 if config.rewrite_prompt:
-                    p_optim = self.optimize_prompt(evaluating_model.model_handle, p)
+                    p_optim = self.optimize_prompt(self.auditor_model.model_handle, p)
                     if p_optim is None:
                         logger.warning(f"Unable to optimize prompt using model handle {evaluating_model.name}")
                         evaluation_array[trial, :] = None
@@ -236,13 +235,13 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
                 if evaluation_data:
                     result_indexes = evaluation_data['model_indexes']
-                    model_names = [test_models[result_indexes[0]].name, 
-                                   test_models[result_indexes[1]].name]
+                    model_names = [self.test_models[self.test_indexes[0]].name,
+                                   self.test_models[self.test_indexes[1]].name]
                     evaluation_array[trial, :] = result_indexes[0:2]
                     sim_model_names[trial, :] = model_names
 
                     correct = model_names[0] == model_names[1]
-                    correct_idxs = self._find_matching_indexes([m.model_handle for m in test_models])
+                    correct_idxs = self.test_indexes
                     trial_result_obj = {
                         "correct": correct,
                         "selected_ids": result_indexes[0:2],
@@ -251,7 +250,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
                     past_results.append(trial_result_obj)
 
                     logger.info(
-                        f"Evaluator: {evaluating_model.name}, "
+                        f"Evaluator: {self.auditor_model.name}, "
                         f"Trial: {trial} ",
                         f"Trial Result: {trial_result_obj}"
                     )
@@ -263,8 +262,8 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
         output_obj = {
             'evaluations': evaluation_array,
-            'evaluating_model':  evaluating_model.name,
-            'test_models': [m.name for m in test_models],
+            'evaluating_model':  self.auditor_model.name,
+            'test_models': [m.name for m in self.test_models],
             'similar_models': sim_model_names
         }
 
@@ -335,8 +334,9 @@ if __name__ == "__main__":
     args = parse_args()
 
     load_dotenv(args.config_path)
+    model_yaml_file = args["models_file"]
 
-    evaluator = AdversarialEvaluation()
+    evaluator = AdversarialEvaluation(model_yaml_file)
     evaluation_config = EvaluationConfig({
         "num_trials": args.num_trials,
         "rewrite_prompt": args.rewrite_prompt,
