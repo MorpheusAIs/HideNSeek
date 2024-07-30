@@ -16,10 +16,6 @@ from scipy.stats import ttest_ind, ttest_ind, mannwhitneyu, t, sem
 from dotenv import load_dotenv
 import argparse
 
-import sys
-current_path = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.abspath(os.path.join(current_path, os.pardir))
-sys.path.insert(0, parent_dir)
 
 from llm.llm_client import TogetherClient
 from utils.logger_config import setup_logger
@@ -256,7 +252,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
                     logger.info(
                         f"Evaluator: {evaluating_model.name}, "
-                        f"Trial: {trial}",
+                        f"Trial: {trial} ",
                         f"Trial Result: {trial_result_obj}"
                     )
 
