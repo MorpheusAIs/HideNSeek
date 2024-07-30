@@ -166,7 +166,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
     
     def compute_response_evaluation_tensor(self, config: EvaluationConfig, model_indices=None, max_past_outputs=4):
         if model_indices is None:
-            models = self.
+            models = self.test_models
         else:
             models = []
             used_names = set()
