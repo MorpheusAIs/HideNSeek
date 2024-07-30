@@ -68,7 +68,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
     def __init__(self, models_config: str):
         super().__init__()
-        
+
         config = load_config(models_config)
         self.auditor_model = LLMModel(config["auditor_model"]) 
         self.test_models = [LLMModel(model_handle=model) for model in config["test_models"]]
@@ -266,8 +266,9 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
         effective_trials = total_trials - warmup_steps
         if effective_trials <= 0:
             raise ValueError("Warmup steps exceed or equal the total number of trials.")
-    
-        correct_matches = np.sum(sim_models[warmup_steps:, 0] == sim_models[warmup_steps:, 1])
+
+        correct_matches = np.sum((sim_models[warmup_steps:, 0] == self.test_models[self.test_indexes[0]]) & 
+                                 (sim_models[warmup_steps:, 1] == self.test_models[self.test_indexes[1]]))
         accuracy = correct_matches / effective_trials
         return accuracy
     
