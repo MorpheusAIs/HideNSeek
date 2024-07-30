@@ -249,8 +249,8 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
                     logger.info(
                         f"Evaluator: {evaluating_model.name}, "
-                        f"Trial: {trial}, "
-                        f"Evaluation: {evaluation_data}"
+                        f"Trial: {trial} ",
+                        f"Trial Result: {trial_result_obj}"
                     )
 
                     for idx, response in enumerate(model_outputs):
