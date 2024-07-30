@@ -236,7 +236,7 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
 
                     logger.info(
                         f"Evaluator: {self.auditor_model.name}, "
-                        f"Trial: {trial} ",
+                        f"Trial: {trial}, "
                         f"Trial Result: {trial_result_obj}"
                     )
 
@@ -259,16 +259,16 @@ class AdversarialEvaluation (ResponseEvaluationTensor):
     
     def compute_accuracy(self, evaluation_outputs: Dict[str, any], warmup_steps: int): 
 
-        sim_models = evaluation_outputs["similar_models"]
-        total_trials = sim_models.shape[0]
+        evals = evaluation_outputs["evaluations"]
+        total_trials = evals.shape[0]
 
         # Discount warmup steps
         effective_trials = total_trials - warmup_steps
         if effective_trials <= 0:
             raise ValueError("Warmup steps exceed or equal the total number of trials.")
 
-        correct_matches = np.sum((sim_models[warmup_steps:, 0] == self.test_models[self.test_indexes[0]]) & 
-                                 (sim_models[warmup_steps:, 1] == self.test_models[self.test_indexes[1]]))
+        correct_matches = np.sum((evals[warmup_steps:, 0] == self.test_indexes[0]) & 
+                                 (evals[warmup_steps:, 1] == self.test_indexes[1]))
         accuracy = correct_matches / effective_trials
         return accuracy
     
